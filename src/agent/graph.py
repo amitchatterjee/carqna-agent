@@ -15,7 +15,11 @@ from typing import Any
 from deepagents import FilesystemPermission, create_deep_agent, SubAgent
 from deepagents.backends import FilesystemBackend
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from dotenv import load_dotenv
 import httpx
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -109,12 +113,15 @@ Always delegate to the appropriate specialist subagent based on the user's needs
 
 def _load_mcp_config() -> dict:
     """Load MCP configuration from file."""
-    mcp_config_path = os.path.join(
+    default_mcp_path = os.path.join(
         os.path.expanduser("~"),
         ".knowledgexpert",
         "conf",
         "mcp",
         "config.json"
+    )
+    mcp_config_path = os.path.expanduser(
+        os.getenv("MCP_CONFIG_PATH", default_mcp_path)
     )
 
     if not os.path.exists(mcp_config_path):
@@ -189,7 +196,10 @@ def create_graph() -> Any:
         raise
 
     # Initialize read-only filesystem backend for insurance data
-    filesystem_root = "/home/amit/git/knowledgexpert/data/linux-exec/insurance-docs"
+    default_filesystem_root = "~/git/knowledgexpert/data/linux-exec/insurance-docs"
+    filesystem_root = os.path.expanduser(
+        os.getenv("INSURANCE_DOCS_ROOT", default_filesystem_root)
+    )
     if not os.path.exists(filesystem_root):
         raise FileNotFoundError(
             f"Filesystem root not found: {filesystem_root}")
