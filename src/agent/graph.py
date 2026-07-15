@@ -15,6 +15,7 @@ from typing import Any
 from deepagents import FilesystemPermission, create_deep_agent, SubAgent
 from deepagents.backends import FilesystemBackend
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from dotenv import load_dotenv
 import httpx
 
@@ -93,6 +94,23 @@ def _create_httpx_factory():
     return httpx_client_factory
 
 
+def _get_checkpointer_conn_string() -> str:
+    """Get the SQLite database connection string.
+    
+    For local development use only. LangGraph API handles persistence automatically.
+    
+    Returns:
+        Connection string for AsyncSqliteSaver.from_conn_string()
+        Reads from CHECKPOINT_DB_PATH environment variable.
+        Defaults to './.db.sqlite3' if not set.
+    """
+    default_db_path = "./.db.sqlite3"
+    db_path = os.getenv("CHECKPOINT_DB_PATH", default_db_path)
+    db_path = os.path.expanduser(db_path)
+    logger.info(f"Using checkpoint database at: {db_path}")
+    return db_path
+
+
 async def _initialize_mcp_tools():
     """Initialize MCP client and load tools once."""
     global _mcp_client, _mcp_tools
@@ -131,15 +149,19 @@ async def _initialize_mcp_tools():
         raise
 
 
-def create_graph() -> Any:
+async def create_graph(checkpointer=None) -> Any:
     """Create the automobile help application graph.
+
+    Args:
+        checkpointer: Optional checkpointer for state persistence. 
+                     If None, LangGraph API will handle persistence.
 
     Returns:
         DeepAgent graph with car pricing via OpenSearch MCP and insurance info via filesystem.
     """
     # Initialize OpenSearch MCP tools at graph creation time (once, cached for all agents)
     try:
-        tools = asyncio.run(_initialize_mcp_tools())
+        tools = await _initialize_mcp_tools()
     except Exception as e:
         logger.error(f"Failed to initialize MCP tools: {e}")
         raise
@@ -186,7 +208,9 @@ def create_graph() -> Any:
 
     # Create the main deep agent with subagents
     # Main agent has MCP tools for pricing; subagents inherit what they need
+    # Note: LangGraph API handles persistence automatically, so we don't pass a checkpointer there
     llm_model = os.getenv("LLM_MODEL", "claude-sonnet-4-5-20250929")
+    
     main_agent = create_deep_agent(
         model=llm_model,
         tools=tools,
@@ -194,10 +218,40 @@ def create_graph() -> Any:
         system_prompt=_load_prompt_from_file("main_agent.md"),
         subagents=[car_price_agent, insurance_agent],
         name="Automobile Help Assistant",
+        checkpointer=checkpointer,
     )
 
     return main_agent
 
 
-# Create graph
-graph = create_graph()
+# For compatibility with both LangGraph API (sync) and carqna.py (async)
+_graph_instance = None
+
+
+def get_graph() -> Any:
+    """Get the graph instance, creating it if needed (synchronous)."""
+    global _graph_instance
+    if _graph_instance is None:
+        # Try to create graph synchronously if possible
+        try:
+            # Check if we're in an event loop
+            asyncio.get_running_loop()
+            # We're in an async context - can't use asyncio.run()
+            raise RuntimeError(
+                "Graph not yet initialized. Call create_graph() in async context instead."
+            )
+        except RuntimeError as e:
+            if "asyncio.run()" in str(e):
+                raise
+            # No event loop, safe to use asyncio.run()
+            _graph_instance = asyncio.run(create_graph())
+    return _graph_instance
+
+
+# For LangGraph API - lazy create graph
+graph = None
+try:
+    graph = get_graph()
+except RuntimeError:
+    # Will be created later in async context
+    pass
