@@ -252,6 +252,7 @@ def get_graph() -> Any:
 graph = None
 try:
     graph = get_graph()
-except RuntimeError:
-    # Will be created later in async context
+except Exception:
+    # Will be created later in async context (or if MCP fails at import time)
+    logger.debug("Graph not initialized at import time (expected for services like carqna_dapr)")
     pass
