@@ -18,12 +18,12 @@ pip install pip-tools
 Create a new project
 ```bash
 cd ~/git
-langgraph new test-langgraph  --template new-langgraph-project-python
+langgraph new carqna-agent  --template new-langgraph-project-python
 ```
 
 Install runtime dependencies
 ```bash
-cd ~/git/test-langgraph
+cd ~/git/carqna-agent
 python -m piptools compile pyproject.toml -o /tmp/requirements.txt
 pip install -r /tmp/requirements.txt
 pip install -e .
@@ -59,7 +59,7 @@ export LLM_MODEL=claude-sonnet-4-5-20250929
 
 **Run the interactive agent:**
 ```bash
-cd ~/git/test-langgraph
+cd ~/git/carqna-agent
 python -m agent.carqna
 ```
 

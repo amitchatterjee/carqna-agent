@@ -702,7 +702,7 @@ curl -X POST http://localhost:3500/v1.0/invoke/carqna-dapr/method/invoke/chat \
 ## 12. File Structure After Implementation
 
 ```
-test-langgraph/
+carqna-agent/
 ├── .plans/
 │   └── carqna-dapr-integration.md          # ✅ This plan (CREATED)
 ├── src/
