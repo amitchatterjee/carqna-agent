@@ -1,0 +1,113 @@
+
+services:
+
+  opensearch:
+    image: opensearch-with-mcp:latest
+    build:
+      context: ./opensearch-mcp
+      dockerfile: Dockerfile
+      args:
+        OPENSEARCH_VERSION: ${OPENSEARCH_VERSION:-latest}
+    container_name: opensearch
+    environment:
+      - discovery.type=single-node
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=openSearch$2025
+      - OPENSEARCH_JAVA_OPTS=-Xms512M -Xmx512M
+      - plugins.ml_commons.mcp_server_enabled=true
+      - plugins.ml_commons.mcp_connector_enabled=true
+      - plugins.ml_commons.trusted_connector_endpoints_regex=["^https?://localhost.*"]
+      - plugins.ml_commons.stream_enabled=true
+    ulimits:
+      memlock:
+        soft: -1 # Set memlock to unlimited (no soft or hard limit)
+        hard: -1
+      nofile:
+        soft: 65536 # Maximum number of open files for the opensearch user - set to at least 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ports:
+      - 9200:9200 # REST API
+      #- 9600:9600 # Performance Analyzer
+    healthcheck:
+      test: ["CMD-SHELL", "curl -k -u 'admin:openSearch$2025' --silent --fail https://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s # Crucial: gives OpenSearch time to bootstrap JVM
+    networks:
+      - dapr-network
+
+  carqna-dev:
+    image: carqna-dev:latest
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/carqna-dev/Dockerfile
+    container_name: carqna-dev
+    command: bash -c "cd /carqna-agent/ && python -m src.agent.carqna_dapr"
+    ports:
+      - "5001:5001"
+    environment:
+      - DAPR_SERVICE_PORT=5001
+      - CHECKPOINT_DB_PATH=./.db.sqlite3
+      - PROMPTS_DIR=.
+    volumes:
+      - ${PWD}:/carqna-agent
+    networks:
+      - dapr-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  carqna-dapr:
+    image: daprio/daprd:latest
+    command:
+      - ./daprd
+      - -app-id=carqna-service
+      - -app-channel-address=carqna-dev
+      - -app-port=5001
+      - -app-protocol=http
+      - -dapr-http-port=3500
+      - -config=/etc/dapr/config.yaml
+      - -log-level=debug 
+      - -enable-api-logging=true
+    container_name: carqna-dapr
+    ports:
+      - "3500:3500" 
+    volumes:
+      - ./dapr-config.yaml:/etc/dapr/config.yaml:ro
+    networks:
+      - dapr-network
+    depends_on:
+      carqna-dev:
+        condition: service_healthy
+
+  carqna-copilot-ui:
+    image: carqna-copilot-ui:latest
+    build:
+      context: ../../../carqna-copilot-ui
+      dockerfile: ../carqna-agent/infrastructure/docker/carqna-copilot-ui/Dockerfile
+    container_name: carqna-copilot-ui
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://localhost:3500/v1.0/invoke/carqna-service/method/agent
+    ports:
+      - 3000:3000
+    networks:
+      - dapr-network
+    depends_on:
+      - carqna-dapr
+
+volumes:
+  opensearch-data:
+    driver: local
+    name: opensearch-data
+
+networks:
+  dapr-network:
+    driver: bridge

@@ -63,15 +63,8 @@ def _load_prompt_from_file(filename: str) -> str:
 
 def _load_mcp_config() -> dict:
     """Load MCP configuration from file."""
-    default_mcp_path = os.path.join(
-        os.path.expanduser("~"),
-        ".knowledgexpert",
-        "conf",
-        "mcp",
-        "config.json"
-    )
     mcp_config_path = os.path.expanduser(
-        os.getenv("MCP_CONFIG_PATH", default_mcp_path)
+        os.getenv("MCP_CONFIG_PATH")
     )
 
     if not os.path.exists(mcp_config_path):
@@ -83,6 +76,7 @@ def _load_mcp_config() -> dict:
     if not config:
         raise ValueError("MCP config is empty")
 
+    logger.info(f'Loaded mcp config file from {mcp_config_path}')
     return config
 
 

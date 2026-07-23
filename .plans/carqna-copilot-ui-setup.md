@@ -118,9 +118,9 @@ Type definitions for all backend response formats and frontend state models.
 
 ---
 
-## 6. Main App Component
+## 6. Main App Component ✅ COMPLETE
 
-**File:** `src/app/page.tsx`
+**File:** `src/app/page.tsx` - [Implemented]
 
 ```typescript
 "use client";
@@ -238,7 +238,7 @@ npm run dev
 
 ---
 
-## 12. Deployment Options
+## 12. Deployment Options ✅ COMPLETE (Option B: Docker)
 
 ### Option A: Vercel (Recommended)
 ```bash
@@ -306,11 +306,11 @@ services:
 8. [x] Build ChatInterface component
 9. [x] Build EventTraceViewer component
 
-### Phase 3: App Setup ⏳ TODO
-10. [ ] Create main App component
-11. [ ] Integrate Copilot Kit provider
-12. [ ] Set up styling (Tailwind or CSS)
-13. [ ] Configure environment variables
+### Phase 3: App Setup ✅ COMPLETE
+10. [x] Create main App component
+11. [x] Integrate Copilot Kit provider
+12. [x] Set up styling (Tailwind or CSS)
+13. [x] Configure environment variables
 
 ### Phase 4: Testing & Polish ⏳ TODO
 14. [ ] Test streaming chat with running backend
@@ -319,11 +319,17 @@ services:
 17. [ ] Add error handling and loading states
 18. [ ] Test with multiple concurrent sessions
 
-### Phase 5: Deployment ⏳ TODO
-19. [ ] Build optimized bundle
-20. [ ] Test production build locally
-21. [ ] Configure deployment target (Vercel/Docker)
-22. [ ] Set up backend URL for production
+### Phase 5: Deployment ✅ COMPLETE (Docker Option B)
+19. [x] Build optimized bundle
+20. [x] Test production build locally
+21. [x] Configure deployment target (Docker)
+22. [x] Set up backend URL for production
+
+**Docker Setup:**
+- [x] Created `/infrastructure/docker/carqna-copilot-ui/Dockerfile` with multi-stage build
+- [x] Updated `docker-compose.yml` with carqna-copilot-ui service
+- [x] Configured environment variable `NEXT_PUBLIC_API_BASE=http://carqna-dev:5001`
+- [x] Set up service dependencies and networking
 
 ---
 
