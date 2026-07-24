@@ -112,67 +112,141 @@ class GraphEvent(BaseModel):
 # ============================================================================
 # Event Formatting
 # ============================================================================
-def _format_graph_event(event: dict, step: int) -> Optional[GraphEvent]:
-    """Convert LangGraph event to frontend-friendly format.
-    
-    Args:
-        event: Raw LangGraph event
-        step: Step counter
-        
-    Returns:
-        Formatted GraphEvent or None if not relevant
+def _extract_command_final_text(output: Any) -> Optional[str]:
+    """Extract clean final-answer text from a LangGraph Command update.
+
+    Used both when a chain ends and when a tool (e.g. a subagent invoked via
+    a task/delegation tool) returns a Command carrying the final assistant
+    message directly, instead of surfacing it through an on_chain_end event.
     """
+    raw_content = None
+
+    # Track A: Handle native 'Command' objects directly
+    if output.__class__.__name__ == 'Command' or hasattr(output, 'update'):
+        update_dict = getattr(output, 'update', {}) or {}
+        if isinstance(update_dict, dict) and 'messages' in update_dict:
+            messages = update_dict.get('messages') or []
+            if messages:
+                raw_content = messages[-1].content
+
+    # Track B: Standard dictionary fallback
+    elif isinstance(output, dict) and 'messages' in output:
+        messages = output.get('messages') or []
+        if messages:
+            raw_content = messages[-1].content
+
+    # Track C: Handle a leaked string representation of a Command object
+    elif isinstance(output, str) and "Command(update=" in output:
+        try:
+            import re
+            match = re.search(r"'(?:text|content)':\s*[\"'](.*?)[\"']", output)
+            if match:
+                raw_content = match.group(1).encode().decode('unicode_escape')
+        except Exception:
+            pass
+
+    if not raw_content:
+        return None
+
+    # Unpack the validated content structure
+    clean_text_output = ""
+    if isinstance(raw_content, list) and len(raw_content) > 0:
+        first_item = raw_content
+        if isinstance(first_item, dict):
+            if first_item.get('type') == 'tool_use':
+                return None
+            clean_text_output = first_item.get('text', '')
+        else:
+            clean_text_output = str(first_item)
+
+    # Check for stringified JSON arrays
+    elif isinstance(raw_content, str) and raw_content.strip().startswith('['):
+        try:
+            parsed_list = json.loads(raw_content)
+            if isinstance(parsed_list, list) and len(parsed_list) > 0:
+                first_item = parsed_list
+                if isinstance(first_item, dict):
+                    if first_item.get('type') == 'tool_use':
+                        return None
+                    clean_text_output = first_item.get('text', '')
+        except Exception:
+            clean_text_output = raw_content
+    elif isinstance(raw_content, str):
+        clean_text_output = raw_content
+
+    # Prevent tool routing updates from triggering a final response
+    if "tool_use" in clean_text_output or "subagent_type" in clean_text_output:
+        return None
+
+    if clean_text_output and clean_text_output.strip() and not clean_text_output.startswith("Command(update="):
+        return clean_text_output
+
+    return None
+
+
+def _format_graph_event(event: dict, step_counter: int):
+    """How your code looked when it outputted the raw JSON strings."""
     event_type = event.get('event')
     timestamp = datetime.now().isoformat()
-    
+
     try:
         if event_type == 'on_tool_start':
             data = event.get('data', {})
             tool_name = data.get('tool')
             if not tool_name:
                 tool_name = event.get('metadata', {}).get('tool_name', 'unknown')
-            
             return GraphEvent(
                 type='tool_call',
-                step=step,
+                step=step_counter,
                 timestamp=timestamp,
                 tool=tool_name,
-                input=data.get('input', {})
+                content=str(data.get('input', {}))
             )
-        
+
         elif event_type == 'on_tool_end':
             data = event.get('data', {})
             tool_name = data.get('tool')
             if not tool_name:
                 tool_name = event.get('metadata', {}).get('tool_name', 'unknown')
-            
             output = data.get('output', '')
+
+            # A tool (e.g. a subagent invoked via a task/delegation tool) may
+            # return a Command carrying the final assistant message directly.
+            # Classify that as the final response instead of a truncated,
+            # generic tool result.
+            final_text = _extract_command_final_text(output)
+            if final_text:
+                return GraphEvent(
+                    type='final_response',
+                    step=step_counter,
+                    timestamp=timestamp,
+                    tool=tool_name,
+                    content=final_text
+                )
+
             if isinstance(output, dict):
                 output = json.dumps(output)
             elif not isinstance(output, str):
                 output = str(output)
-            
             return GraphEvent(
                 type='tool_result',
-                step=step,
+                step=step_counter,
                 timestamp=timestamp,
                 tool=tool_name,
-                output=output[:500]  # Limit output size for readability
+                content=output[:500]
             )
-        
+
         elif event_type == 'on_llm_start':
             return GraphEvent(
                 type='llm_thinking',
-                step=step,
+                step=step_counter,
                 timestamp=timestamp,
                 content='LLM processing...'
             )
-        
+            
         elif event_type == 'on_llm_end':
             data = event.get('data', {})
             output = data.get('output', {})
-            
-            # Extract message content
             if isinstance(output, dict):
                 content = output.get('content', '')
                 if isinstance(content, list) and content:
@@ -181,15 +255,14 @@ def _format_graph_event(event: dict, step: int) -> Optional[GraphEvent]:
                     content = str(content)
             else:
                 content = str(output)
-            
             if content:
                 return GraphEvent(
                     type='llm_thinking',
-                    step=step,
+                    step=step_counter,
                     timestamp=timestamp,
-                    content=content[:300]  # Limit for readability
+                    content=content[:300]
                 )
-        
+                
         elif event_type == 'on_chain_end':
             chain_name = event.get('name', '')
             
@@ -198,51 +271,24 @@ def _format_graph_event(event: dict, step: int) -> Optional[GraphEvent]:
                 return None
 
             data = event.get('data', {})
-            output = data.get('output', {})
-            
-            raw_content = None
-            
-            # 2. FIX: Track Option A - Output is a dictionary containing a 'messages' key
-            if isinstance(output, dict) and 'messages' in output:
-                messages = output.get('messages') or []
-                if messages:
-                    raw_content = messages[-1].content
-                    
-            # 3. FIX: Track Option B - Output is a direct flat list array of message objects
-            elif isinstance(output, list) and len(output) > 0:
-                raw_content = output[-1].content if hasattr(output[-1], 'content') else output[-1].get('content', '')
+            output = data.get('output') or {}
 
-            # 4. If we extracted a valid content structure, parse and clean the text string
-            if raw_content:
-                clean_text_output = ""
-
-                # Decode the stringified JSON array notation seen in your traces
-                if isinstance(raw_content, str) and raw_content.strip().startswith('['):
-                    try:
-                        parsed_list = json.loads(raw_content)
-                        if isinstance(parsed_list, list) and len(parsed_list) > 0:
-                            first_item = parsed_list[0]
-                            if isinstance(first_item, dict) and 'text' in first_item:
-                                clean_text_output = first_item['text']
-                    except Exception:
-                        clean_text_output = raw_content
-                elif isinstance(raw_content, str):
-                    clean_text_output = raw_content
-
-                # Only return the GraphEvent when we have isolated genuine final text markdown
-                if clean_text_output and clean_text_output.strip():
-                    logger.info(f"✨ Successfully isolated final answer text payload length: {len(clean_text_output)}")
-                    return GraphEvent(
-                        type='final_response',
-                        step=step,
-                        timestamp=timestamp,
-                        content=clean_text_output
-                    )
+            final_text = _extract_command_final_text(output)
+            if final_text:
+                logger.info(f"✨ Successfully isolated pure text payload length: {len(final_text)}")
+                return GraphEvent(
+                    type='final_response',
+                    step=step_counter,
+                    timestamp=timestamp,
+                    tool=chain_name or 'LangGraph',
+                    content=final_text
+                )
 
     except Exception as e:
         logger.warning(f"Failed to format event: {e}", exc_info=True)
-    
+        
     return None
+
 
 def _extract_response(result: dict) -> str:
     """Extract final response text from agent result.
@@ -444,52 +490,20 @@ async def chat_stream(request: web.Request) -> web.StreamResponse:
                 graph_event = _format_graph_event(event, step_counter)
                 
                 if graph_event:
-                    copilot_payload = None
-
-                    # Track A: The real final markdown text gets mapped to the thread content
-                    if graph_event.type == 'final_response':
-                        copilot_payload = {
-                            "type": "thread_update",
-                            "choices": [
-                                {
-                                    "delta": {
-                                        "content": graph_event.content # Clean Markdown text strings
-                                    }
-                                }
-                            ]
-                        }
-
-                    # Track B: Convert your intermediate thinking steps into CopilotKit Action logs
-                    # This lets the user see "LLM processing..." or "OpenSearch searching..." 
-                    # as a clean loading state banner inside the UI instead of breaking the text window!
-                    elif graph_event.type == 'llm_thinking':
-                        copilot_payload = {
-                            "type": "action_execution_start", # <--- Tells CopilotKit a tool/step started
-                            "actionExecutionId": f"step_{step_counter}",
-                            "actionName": "Agent_Thinking",
-                            "status": "executing"
-                        }
-
-                    elif graph_event.type == 'tool_call':
-                        copilot_payload = {
-                            "type": "action_execution_start",
-                            "actionExecutionId": f"tool_{step_counter}",
-                            "actionName": f"Querying_{graph_event.tool}",
-                            "status": "executing"
-                        }
-
-                    # If an active layout envelope was generated, commit it to the network socket
-                    if copilot_payload:
-                        sse_line = f"data: {json.dumps(copilot_payload)}\n\n"
-                        await response.write(sse_line.encode('utf-8'))
-                        
+                    # Serialize the whole GraphEvent object instance directly using model_dump
+                    event_json = graph_event.model_dump()
+                    
+                    # Wrap in your custom 'data: ' prefix format string
+                    sse_line = f"data: {json.dumps(event_json)}\n\n"
+                    await response.write(sse_line.encode('utf-8'))
+                    
                     step_counter += 1
-
+                    logger.info(f"Piped graph event line {step_counter}: {graph_event.type}")
             
-            # 5. Send the official finalization marker to release the UI loading skeleton spinner
-            completion_line = "data: {\"type\": \"done\"}\n\n"
-            await response.write(completion_line.encode('utf-8'))
-            logger.info(f"Stream pipeline completed smoothly (thread: {thread_id})")
+            # Send your standard done token message payload
+            done_payload = {"type": "done", "step": step_counter, "timestamp": datetime.now().isoformat(), "tool": "", "content": ""}
+            await response.write(f"data: {json.dumps(done_payload)}\n\n".encode('utf-8'))
+            logger.info(f"Stream completed smoothly for thread: {thread_id}")
             
         except asyncio.CancelledError:
             logger.info(f"Stream cancelled (thread: {thread_id})")
@@ -661,8 +675,8 @@ def create_app() -> web.Application:
     app.router.add_get('/chat', chat)
     app.router.add_post('/invoke/chat', chat)
 
-    app.router.add_post('/chat/stream', chat)
-    app.router.add_get('/chat/stream', chat)
+    app.router.add_post('/chat/stream', chat_stream)
+    app.router.add_get('/chat/stream', chat_stream)
     app.router.add_post('/invoke/chat/stream', chat_stream)
 
     app.router.add_post('/agent/chat/stream', chat_stream)
