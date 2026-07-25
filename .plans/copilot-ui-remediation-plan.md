@@ -169,18 +169,37 @@ or something else) so the second attempt doesn't repeat it.
 
 ## Proposed phased plan (assuming Option 1 is confirmed)
 
-1. **Spike**: stand up `app/api/copilotkit/route.ts` + `CopilotRuntime` against `langgraph dev`
-   running locally (bypassing Dapr entirely) to validate the LangGraph Platform route works with
-   this repo's `graph.py` (subagents, MCP tools, filesystem backend) before touching any UI code.
-   Since a prior attempt at this failed, treat this step as a real diagnostic pass, not a
-   formality — confirm package versions are compatible (`@copilotkit/react-core`/`react-ui`
-   `1.63.1` against whatever `copilotkit` Python SDK / LangGraph Platform version gets used), and
-   get a minimal end-to-end message round-trip working before layering subagents/tool-call
-   rendering on top.
+1. **Spike**: validate the actual chosen backend integration path — the `copilotkit` Python SDK
+   mounted directly on `carqna_dev` (see "Backend integration path" below), not LangGraph Platform —
+   before touching any real UI code. Since a prior attempt at CopilotKit integration failed, treat
+   this as a real diagnostic pass, not a formality:
+   - **Backend**: add `copilotkit` to `pyproject.toml`. Write a bare-minimum
+     `copilotkit_server.py`: wrap `graph.py`'s `create_graph()` in
+     `copilotkit.langgraph.LangGraphAgent`, register it on a `CopilotKitRemoteEndpoint`, mount via
+     `add_fastapi_endpoint` on a tiny FastAPI app. No health checks or extra routes yet. Run it
+     directly on the host (no Docker, no Dapr) for the fastest iteration loop.
+   - **Frontend**: add `app/api/copilotkit/route.ts` running `CopilotRuntime` configured with a
+     remote endpoint pointed at that local FastAPI service (the "remote endpoint" pattern, since
+     the graph is served by the Python SDK rather than a LangGraph Platform URL). Point
+     `<CopilotKit runtimeUrl="/api/copilotkit">` at it — reuse the existing page shell or a
+     throwaway route with a single bare `CopilotChat`; no styling/polish work.
+   - **Validate**: discovery handshake succeeds; one message streams token-by-token (not a single
+     pop-in); one subagent/tool call (e.g. a car-price lookup) surfaces `TOOL_CALL_*` events via
+     `useCoAgentStateRender`/CopilotChat's built-in tool rendering; confirm and pin the working
+     `@copilotkit/react-core`/`react-ui` (`1.63.1`) ↔ `copilotkit` Python SDK version pairing —
+     a version/protocol mismatch is the leading suspect for why the earlier attempt failed, so
+     record both versions once this works. If any check fails, that's the diagnostic signal this
+     step exists to catch, before steps 4-7 sink real UI work into an approach that doesn't
+     actually connect.
 2. **Backend cutover**: rename `carqna_dapr.py` to `copilotkit_server.py`, replacing its hand-rolled
    endpoints and CopilotKit discovery shimming with the `copilotkit` Python SDK mounted directly on
    `carqna_dev` (decided — see "Backend integration path" below), and remove the `carqna-dapr`
-   service + Dapr env vars from `docker-compose.yml`/`.env.example`.
+   service + Dapr env vars from `docker-compose.yml`/`.env.example`. Also **delete `cors_middleware`
+   and all `Access-Control-Allow-*` header handling** (`carqna_dapr.py:589-620` and the headers on
+   `copilot_info`/streaming responses) rather than port it — under the new architecture the browser
+   only ever talks to `app/api/copilotkit/route.ts` (same-origin as the page), which then calls
+   `copilotkit_server.py` server-to-server; no browser-origin request ever reaches this service
+   directly, so there's nothing for CORS to guard.
 3. **Replace transport**: swap `runtimeUrl` to the new route, remove the direct-to-Dapr `fetch`
    calls in `carqnaService.ts`.
 4. **Replace UI**: swap `ChatInterface`'s hand-built list/input for `CopilotChat`
