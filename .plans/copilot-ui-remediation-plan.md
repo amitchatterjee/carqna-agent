@@ -172,24 +172,93 @@ or something else) so the second attempt doesn't repeat it.
 1. **Spike**: validate the actual chosen backend integration path — the `copilotkit` Python SDK
    mounted directly on `carqna_dev` (see "Backend integration path" below), not LangGraph Platform —
    before touching any real UI code. Since a prior attempt at CopilotKit integration failed, treat
-   this as a real diagnostic pass, not a formality:
-   - **Backend**: add `copilotkit` to `pyproject.toml`. Write a bare-minimum
-     `copilotkit_server.py`: wrap `graph.py`'s `create_graph()` in
-     `copilotkit.langgraph.LangGraphAgent`, register it on a `CopilotKitRemoteEndpoint`, mount via
-     `add_fastapi_endpoint` on a tiny FastAPI app. No health checks or extra routes yet. Run it
-     directly on the host (no Docker, no Dapr) for the fastest iteration loop.
-   - **Frontend**: add `app/api/copilotkit/route.ts` running `CopilotRuntime` configured with a
-     remote endpoint pointed at that local FastAPI service (the "remote endpoint" pattern, since
-     the graph is served by the Python SDK rather than a LangGraph Platform URL). Point
-     `<CopilotKit runtimeUrl="/api/copilotkit">` at it — reuse the existing page shell or a
-     throwaway route with a single bare `CopilotChat`; no styling/polish work.
-   - **Validate**: discovery handshake succeeds; one message streams token-by-token (not a single
-     pop-in); one subagent/tool call (e.g. a car-price lookup) surfaces `TOOL_CALL_*` events via
-     `useCoAgentStateRender`/CopilotChat's built-in tool rendering; confirm and pin the working
-     `@copilotkit/react-core`/`react-ui` (`1.63.1`) ↔ `copilotkit` Python SDK version pairing —
-     a version/protocol mismatch is the leading suspect for why the earlier attempt failed, so
-     record both versions once this works. If any check fails, that's the diagnostic signal this
-     step exists to catch, before steps 4-7 sink real UI work into an approach that doesn't
+   this as a real diagnostic pass, not a formality. **Status: paused 2026-07-25, to resume next
+   week. Backend + frontend code written and verified as far as static checks go; the actual
+   end-to-end run (real servers, real chat turn) has not been done yet.**
+
+   **Done so far** (both repos on `feature/copilot-ui-remediation`, work done in `~/langsmith.venv`):
+   - `carqna-agent`: `copilotkit`/`uvicorn` added to `pyproject.toml`, editable-installed into the
+     venv. New `src/agent/copilotkit_server.py` written, wired with the same `AsyncSqliteSaver`
+     checkpointer as `carqna_dapr.py` (sqlite3 now, Postgres later). Import-verified only — confirmed
+     it loads cleanly and (once `opensearch` was up) that `create_graph()` really does return live
+     MCP tools (`ListIndexTool`, `SearchIndexTool`). Never actually started as a running server.
+   - `carqna-copilot-ui`: added `@copilotkit/runtime@1.63.1` and `@ag-ui/client@0.0.57` as explicit
+     deps (both were missing). New `app/api/copilotkit/route.ts` and throwaway `app/spike/page.tsx`.
+     `tsc --noEmit` and `eslint` both pass. Never actually run via `npm run dev` or opened in a
+     browser.
+   - `opensearch` container confirmed running and healthy (`docker ps`) as of 2026-07-25 — check
+     it's still up before resuming; if not, `docker compose -f infrastructure/docker/docker-compose.yml
+     up -d opensearch`.
+
+   **To resume next week — the actual validation run (nothing below this has been done yet):**
+   1. Confirm `opensearch` is up (`docker ps`).
+   2. Start the backend: `~/langsmith.venv/bin/python -m agent.copilotkit_server` from `carqna-agent`
+      (port 8000). Watch the startup log for the MCP tools line before proceeding.
+   3. **Smoke-test the backend alone first**, before touching the frontend — isolates a backend bug
+      from a frontend/wiring bug, which matters given the prior CopilotKit attempt failed for reasons
+      never diagnosed. `curl -N -X POST http://localhost:8000/ -H "Content-Type: application/json" -d
+      '{"threadId":"t1","runId":"r1","state":{},"messages":[{"id":"1","role":"user","content":"hello"}],
+      "tools":[],"context":[],"forwardedProps":{}}'` — expect a raw AG-UI SSE stream (`RUN_STARTED`,
+      `TEXT_MESSAGE_START/CONTENT/END`, `RUN_FINISHED`), not an error or a hang.
+   4. Start the frontend: `npm run dev` in `carqna-copilot-ui`, visit `/spike`.
+   5. There is **no separate discovery-handshake check** — checked the installed
+      `@copilotkit/runtime`'s `availableAgents` GraphQL resolver directly and it unconditionally
+      returns an empty list in this version (vestigial from the old remote-endpoint protocol). The
+      first real signal is the first message send itself.
+   6. Send one message. In the Network tab, confirm the `POST /api/copilotkit` response is
+      `text/event-stream`, and that the reply fills in **token-by-token**, not as one pop-in block.
+   7. Ask something that forces a car-price lookup (routes through the `car_price_expert` subagent
+      to OpenSearch). Confirm `TOOL_CALL_START/ARGS/END` events actually render in `CopilotChat`'s UI
+      as a tool-call block, not just plain text — DeepAgents delegates to subagents via a task/tool
+      call, which is exactly the shape `carqna_dapr.py`'s old event formatter needed special-case
+      handling for (`_extract_command_final_text`).
+   8. Send a **second** message in the same thread and confirm prior context is retained — this
+      exercises the `AsyncSqliteSaver` checkpointer wiring added this session, which hasn't been
+      tested end-to-end.
+   9. If (and only if) all of the above work, record the confirmed-working version set here:
+      `@copilotkit/react-core`/`react-ui`/`runtime` `1.63.1` ↔ `@ag-ui/client` `0.0.57` ↔ `copilotkit`
+      (Python) `0.1.94` ↔ `ag-ui-langgraph` (Python) `0.0.42`.
+
+   The API actually shipped in `copilotkit==0.1.94` (installed 2026-07-25) differs from what this
+   step originally described — `copilotkit.langgraph.LangGraphAgent` / `CopilotKitRemoteEndpoint` /
+   `add_fastapi_endpoint` no longer exist. CopilotKit has moved to the **AG-UI protocol** as its
+   agent-integration layer, via the separate `ag-ui-langgraph` package. The corrected shape:
+   - **Backend** (`src/agent/copilotkit_server.py`, written): add `copilotkit` (which pulls in
+     `ag-ui-langgraph`, `fastapi`) to `pyproject.toml`. Wrap `graph.py`'s `create_graph()` result in
+     `copilotkit.LangGraphAGUIAgent` (name="carqna_agent"), and mount it with
+     `ag_ui_langgraph.add_langgraph_fastapi_endpoint(app, agent, path="/")` on a tiny FastAPI app —
+     this is a single `POST /` accepting `RunAgentInput` and streaming raw AG-UI SSE events, no
+     GraphQL/remote-endpoint layer involved. `create_graph()` is awaited inside a `lifespan` handler
+     (it's async; MCP init happens there) rather than at import time. Multi-turn state uses the same
+     `AsyncSqliteSaver` (sqlite3 now, Postgres planned later) as `carqna_dapr.py`, opened via
+     `async with AsyncSqliteSaver.from_conn_string(db_path)` spanning the lifespan's `yield` —
+     simpler than `carqna_dapr.py`'s manual `__aenter__`/`__aexit__` + module-global juggling, which
+     was only needed there because aiohttp splits startup/cleanup into separate callback functions.
+     Run directly on the host (no Docker, no Dapr), `python -m agent.copilotkit_server`, port 8000.
+   - **Frontend** (`app/api/copilotkit/route.ts` + `app/spike/page.tsx`, written): needs
+     `@copilotkit/runtime` and `@ag-ui/client` added as explicit dependencies (neither was installed
+     despite `react-core`/`react-ui` being present) — pin both to `1.63.1`/`0.0.57` to match. Build a
+     `CopilotRuntime({ agents: { carqna_agent: new HttpAgent({ url: "http://localhost:8000/" }) } })`
+     — `HttpAgent` from `@ag-ui/client` is the generic AG-UI HTTP client and talks directly to the
+     backend's `add_langgraph_fastapi_endpoint` route. (`@copilotkit/runtime/langgraph`'s
+     `LangGraphHttpAgent` is documented as the friendlier name for this exact class, but its bundled
+     `.d.mts` re-export drops the inherited constructor type — TS2740/TS2554 — so import `HttpAgent`
+     directly instead; functionally identical.) Serve via `copilotRuntimeNextJSAppRouterEndpoint` with
+     `serviceAdapter: new EmptyAdapter()` (no direct-LLM adapter needed when agents handle everything).
+     `app/spike/page.tsx` is the throwaway validation route: `<CopilotKit runtimeUrl="/api/copilotkit">`
+     wrapping `<CopilotChatConfigurationProvider agentId="carqna_agent">` (imported from
+     `@copilotkit/react-core/v2` — **not** re-exported from the package root) wrapping a bare
+     `<CopilotChat />`. The `agentId` wiring is required: the frontend defaults to agent key
+     `"default"` (`DEFAULT_AGENT_ID`) if not told otherwise, which won't match the `carqna_agent` key
+     registered on the runtime.
+   - **Validate** (not yet run — needs `opensearch` up, see step below): discovery handshake succeeds;
+     one message streams token-by-token (not a single pop-in); one subagent/tool call (e.g. a
+     car-price lookup) surfaces `TOOL_CALL_*` events via CopilotChat's built-in tool rendering; confirm
+     the working `@copilotkit/react-core`/`react-ui`/`runtime` (`1.63.1`) ↔ `@ag-ui/client`
+     (`0.0.57`) ↔ `copilotkit` Python SDK (`0.1.94`) ↔ `ag-ui-langgraph` Python (`0.0.42`) version
+     set — a version/protocol mismatch is the leading suspect for why the earlier attempt failed, so
+     record it once confirmed working end-to-end. If any check fails, that's the diagnostic signal
+     this step exists to catch, before steps 4-7 sink real UI work into an approach that doesn't
      actually connect.
 2. **Backend cutover**: rename `carqna_dapr.py` to `copilotkit_server.py`, replacing its hand-rolled
    endpoints and CopilotKit discovery shimming with the `copilotkit` Python SDK mounted directly on
