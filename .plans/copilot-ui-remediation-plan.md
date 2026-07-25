@@ -108,11 +108,11 @@ Replace the hand-rolled SSE client, event schema, and trace viewer with CopilotK
 integration:
 
 - **Backend**: with Dapr dropped (see Decisions below), expose `src/agent/graph.py:graph` to
-  CopilotKit either (a) directly as a LangGraph Platform deployment (`langgraph dev`/`langgraph up`,
-  already configured via `langgraph.json` — CopilotKit's `LangGraphAgent` can point at it as-is), or
-  (b) via the `copilotkit` Python package's `copilotkit.langgraph` helpers
-  (`copilotkit_customize_config`, `CopilotKitRemoteEndpoint`) mounted directly on `carqna_dev`
-  (replacing the current hand-rolled aiohttp routes in `carqna_dapr.py`).
+  CopilotKit via the `copilotkit` Python package's `copilotkit.langgraph` helpers
+  (`copilotkit_customize_config`, `CopilotKitRemoteEndpoint`, `LangGraphAgent`) in a new
+  `src/agent/copilotkit_server.py` module on `carqna_dev` — replacing (renaming from)
+  `carqna_dapr.py` and its hand-rolled aiohttp routes. See the "Backend integration path" decision
+  below for why this was chosen over the LangGraph Platform route.
 - **Frontend**:
   - Add `app/api/copilotkit/route.ts` running `CopilotRuntime` with a `LangGraphAgent` (or
     `LangGraphHttpAgent`) pointed at the above.
@@ -177,10 +177,10 @@ or something else) so the second attempt doesn't repeat it.
    `1.63.1` against whatever `copilotkit` Python SDK / LangGraph Platform version gets used), and
    get a minimal end-to-end message round-trip working before layering subagents/tool-call
    rendering on top.
-2. **Backend cutover**: pick LangGraph Platform API directly vs. the `copilotkit` Python SDK mounted
-   on `carqna_dev`, retire `carqna_dapr.py`'s hand-rolled endpoints and CopilotKit discovery
-   shimming, and remove the `carqna-dapr` service + Dapr env vars from `docker-compose.yml`/
-   `.env.example`.
+2. **Backend cutover**: rename `carqna_dapr.py` to `copilotkit_server.py`, replacing its hand-rolled
+   endpoints and CopilotKit discovery shimming with the `copilotkit` Python SDK mounted directly on
+   `carqna_dev` (decided — see "Backend integration path" below), and remove the `carqna-dapr`
+   service + Dapr env vars from `docker-compose.yml`/`.env.example`.
 3. **Replace transport**: swap `runtimeUrl` to the new route, remove the direct-to-Dapr `fetch`
    calls in `carqnaService.ts`.
 4. **Replace UI**: swap `ChatInterface`'s hand-built list/input for `CopilotChat`
@@ -233,10 +233,10 @@ agent code) keeps running as its own container in `docker-compose.yml`. Concrete
   `-app-id=carqna-service`/`-app-channel-address=carqna-dev`/`-app-port=5001` args, and the
   `dapr-config.yaml` volume mount).
 - **`carqna-dev` service**: keep the service, but change its `command` from
-  `python -m src.agent.carqna_dapr` (the custom aiohttp service being retired per A3) to whatever
-  directly exposes the LangGraph graph — `langgraph up`'s LangGraph Platform server, or a small app
-  running the `copilotkit` Python SDK mounted on this same container. Port mapping (`5001:5001`
-  today) should be updated to match whatever port that process listens on.
+  `python -m src.agent.carqna_dapr` to `python -m src.agent.copilotkit_server` — `carqna_dapr.py`
+  (the custom aiohttp service being retired per A3) is renamed to `copilotkit_server.py` and rebuilt
+  around the `copilotkit` Python SDK (see "Backend integration path" decision). Port mapping
+  (`5001:5001` today) should be updated to match whatever port that process listens on.
 - **`carqna-copilot-ui` service**: change `NEXT_PUBLIC_API_BASE` from
   `http://localhost:3500/v1.0/invoke/carqna-service/method/agent` (the Dapr sidecar URL) to point
   directly at `carqna-dev`'s host/port, and change `depends_on: carqna-dapr` to
@@ -266,6 +266,31 @@ separate primary app content for a sidebar to dock next to or a popup to float o
 scenario those two components target (bolting a copilot onto an existing app). The current
 `ChatInterface` is already a dedicated full-`h-screen` layout, so `CopilotChat` as the page's main
 content is the closer fit and the smaller migration.
+
+### Backend integration path: `copilotkit` SDK on `carqna_dev`, not LangGraph Platform
+
+Resolved 2026-07-24. The two candidates for exposing `graph.py:graph` to CopilotKit:
+
+- **LangGraph Platform** (`langgraph build`/`langgraph dockerfile` + `langgraph up`) — the repo is
+  already wired for this (`langgraph.json` declares `graphs.agent`), so it's close to zero new code.
+  But the resulting image runs on the Elastic License 2.0 `langchain/langgraph-api` base, and
+  production self-hosted use requires `LANGGRAPH_CLOUD_LICENSE_KEY` — which per LangChain's own forum
+  is tied to a LangSmith **Enterprise** plan, not a free/Plus account or API key. (One GitHub issue
+  thread claims the license gate is actually scoped to the self-hosted *observability* feature
+  specifically and that a plain API key sufficed in lighter testing — but that's an unofficial,
+  reverse-engineered finding, not documented behavior worth architecting around.)
+- **`copilotkit` Python SDK mounted on `carqna_dev`** — keeps the current lightweight
+  `python:3.14-slim` + pip-tools Dockerfile pattern; adds `copilotkit` to `pyproject.toml`.
+  `carqna_dapr.py` is renamed to `src/agent/copilotkit_server.py` and rebuilt to wrap `graph.py`'s
+  `create_graph()` with `CopilotKitRemoteEndpoint`/`LangGraphAgent`, replacing the old module's
+  command in `docker-compose.yml`. No license key, MIT-licensed footing throughout.
+
+**Decision**: no LangSmith Enterprise plan is in scope for this project, so the license requirement
+rules out the Platform path for production. Going with the **`copilotkit` SDK mounted on
+`carqna_dev`**. This does mean writing real (if small) integration code rather than getting it for
+free — the spike step (Step 1) needs to validate this wrapper actually speaks the protocol
+`@copilotkit/react-core`/`react-ui` expect, since a version/protocol mismatch is the leading
+suspect for why the earlier attempt failed.
 
 All open questions are now resolved — this plan is ready to move from review into implementation
 planning whenever you want to proceed.
