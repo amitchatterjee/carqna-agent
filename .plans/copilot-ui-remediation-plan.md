@@ -272,8 +272,29 @@ or something else) so the second attempt doesn't repeat it.
 3. **Replace transport**: swap `runtimeUrl` to the new route, remove the direct-to-Dapr `fetch`
    calls in `carqnaService.ts`.
 4. **Replace UI**: swap `ChatInterface`'s hand-built list/input for `CopilotChat`
-   (or `CopilotSidebar`/`CopilotPopup`, pick based on desired layout), wire `useCoAgentStateRender`
-   for subagent/tool visibility.
+   (or `CopilotSidebar`/`CopilotPopup`, pick based on desired layout), wire tool/subagent-call
+   visibility.
+
+   **Correction (2026-08-01)**: this step originally said to use `useCoAgentStateRender` for
+   tool/subagent visibility — that hook is for LangGraph *state* snapshots, a different mechanism, and
+   doesn't match the AG-UI tool-call events this app actually produces. The validated mechanism is
+   `useRenderTool` (from `@copilotkit/react-core/v2`): it registers a renderer keyed by tool name
+   (or `"*"` for all tools) into a shared registry that `CopilotChat`'s existing message-building logic
+   (`useLazyToolRenderer` → `useRenderToolCall`) already reads from for every real assistant message in
+   `agent.messages` — not just the in-flight run. That's the key property: it's what makes the
+   rendered output persist in the transcript, unlike `CopilotChat`'s default transient "running"
+   placeholder (shown only while `agent.isRunning` and no final assistant text exists yet for the
+   run), which disappears the moment the real answer lands.
+
+   **First piece delivered and validated 2026-08-01** (in `carqna-copilot-ui`, still scoped to
+   `/spike` — not yet promoted into `app/page.tsx`/`ChatInterface.tsx`, which is the rest of this
+   step): `src/components/ToolCallPanel.tsx` (collapsible per-tool-call panel, styled after the
+   existing `EventTraceViewer.tsx` conventions — Tailwind, `<details>/<summary>`, colored left border;
+   expanded while running, auto-collapses once on completion, then fully user-toggleable) +
+   `src/components/ToolCallRenderers.tsx` (mounts `useRenderTool({name: "*", render: ...})` inside
+   `<CopilotKit>`), wired into `app/spike/page.tsx`. Confirmed working end-to-end by the project
+   owner: panel renders at the top of the assistant message, expanded while the tool runs, stays
+   visible (collapsed) after the final answer, and reopens on click with args/result intact.
 5. **Delete dead code**: `useCarqnaChat.ts`, SSE buffering in `carqnaService.ts`, `GraphEvent`/
    `ChatResponse` types, `EventTraceViewer.tsx` (or keep a slimmed version purely for the
    tool-call render function passed to `useCoAgentStateRender`), unused `getHealth`/`ChatSession`,
