@@ -7,8 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `carqna-agent` is the backend half of **CarQnA**, an automobile-help multi-agent system built on
 LangGraph + [DeepAgents](https://github.com/langchain-ai/deepagents). It's paired with the sibling
 repo `carqna-copilot-ui` (Next.js + CopilotKit frontend, `~/git/carqna-copilot-ui`), which talks to
-this service over Dapr/HTTP. This repo owns the agent logic itself plus the infrastructure (Docker
-Compose, OpenSearch, Dapr, nginx) needed to run the whole stack locally.
+this service over the AG-UI protocol via a Next.js `CopilotRuntime` route, not directly and not
+through Dapr. This repo owns the agent logic itself plus the infrastructure (Docker Compose,
+OpenSearch) needed to run it locally — Docker is used for OpenSearch only; the agent and frontend
+both run directly on the host.
 
 Do not read or reference the `.plans/` folder — it is out of scope.
 
@@ -106,34 +108,27 @@ AG-UI/`ag-ui-langgraph` question, not something to patch in this repo.
 
 ## Infrastructure
 
-`infrastructure/` holds everything needed to run the full stack in Docker:
+Docker is used for `opensearch` only. The agent (`copilotkit_server.py`) and `carqna-copilot-ui`
+both run directly on the host (see `readme-developmment.md`) — this replaced an earlier setup that
+also containerized the agent and frontend behind a Dapr sidecar (`carqna-dapr`) and an nginx reverse
+proxy; that whole layer (`carqna-dev`/`carqna-copilot-ui`/`carqna-dapr` Dockerfiles, `dapr-config.yaml`,
+`nginx.conf`) has been removed, since host-based dev was always the actual flow used to validate this
+app and the extra containers/proxy added nothing.
 
-- `docker/docker-compose.yml` — four services: `opensearch` (custom image with the MCP plugin, built
-  from `docker/opensearch-mcp/`), `carqna-dev` (this agent, running `carqna_dapr`), `carqna-dapr` (the
-  Dapr sidecar `daprd`, routes via `-app-id=carqna-service`), and `carqna-copilot-ui` (built from the
-  sibling frontend repo via a relative build context `../../../carqna-copilot-ui`). Note the frontend
-  talks to the agent through the Dapr sidecar URL
-  (`http://localhost:3500/v1.0/invoke/carqna-service/method/agent`), not directly.
-  **Stale as of the `copilotkit_server.py` cutover**: `carqna_dapr.py` has been deleted, so
-  `carqna-dev`'s `command` in this file no longer works, and the frontend no longer talks through the
-  Dapr sidecar at all (`app/api/copilotkit/route.ts` calls `carqna-dev` directly). Updating this
-  compose file (drop `carqna-dapr`, change `carqna-dev`'s command/port, update `carqna-copilot-ui`'s
-  env/`depends_on`) is a deferred follow-up — local host-based dev doesn't need Docker for anything
-  but `opensearch`, so this doesn't block day-to-day work.
+- `docker/docker-compose.yml` — one service, `opensearch` (custom image with the MCP plugin, built
+  from `docker/opensearch-mcp/`).
+  ```bash
+  docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
+  ```
 - `admin/opensearch/*.ndjson` — role/user/rolesmapping fixtures for OpenSearch security. Applied with
   the `curl`/`jq` loops documented in `readme-developmment.md`. Default fixture users: `alice`
   (read-only on `msrp-*`), `bob` (read/write on `msrp-*`); the MCP config's `Authorization` header
   uses Alice's credentials.
-  ```bash
-  docker compose -f ./infrastructure/docker/docker-compose.yml build carqna-dev
-  docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
-  ```
 - `conf/mcp/opensearch/` — `agent.ndjson` / `mcp-tools.json` registered against OpenSearch's
   `_plugins/_ml/agents/_register` and `_plugins/_ml/mcp/tools/_register` endpoints to stand up the
   AutoGeek MCP tool.
 - `conf/raven/mcp.json` — MCP config variant used elsewhere; keep credentials in sync with the
   OpenSearch user fixtures if you change them.
-- `docker/dapr-config.yaml`, `docker/nginx.conf` — Dapr sidecar and reverse-proxy config.
 
 `readme-developmment.md` has the full copy-pasteable sequence for bootstrapping OpenSearch users/roles
 and registering the MCP agent/tools — consult it before re-deriving these steps.

@@ -1,8 +1,21 @@
 # carqna-copilot-ui: Code Audit & Remediation Plan
 
-Status: **draft for review** — no code has been changed. This is an analysis of
-`~/git/carqna-copilot-ui` as it stands today (last commits: `28d46a0 Fixed the final response -
-more work needed`, `e75fcc9 Fixed UI - work in progress`), plus a proposed plan to fix it.
+Status: **DONE (2026-08-01)**. Every issue in the audit below (A1-A5, B1-B2, C1-C5, D1-D5, E1-E3)
+and every step in the phased plan (Steps 1-7) is implemented and validated end-to-end by the project
+owner — real backend, real frontend, real chat turns, persistent tool-call panels, multi-turn
+context. Docker was simplified further than originally planned (opensearch only; see the "Dapr
+sidecar routing" decision). The one deliberately open item is test coverage (F3) — deferred by
+explicit choice, not an oversight. Kept in `.plans/` for future reference rather than deleted.
+
+The rest of this document is left as-was (the original audit + plan), with status notes inserted
+at the relevant points, so the history of what was found and why each decision was made stays
+intact.
+
+---
+
+This is an analysis of `~/git/carqna-copilot-ui` as it stood on 2026-07-24 (last commits at the
+time: `28d46a0 Fixed the final response - more work needed`, `e75fcc9 Fixed UI - work in progress`),
+plus the plan that was then executed to fix it.
 
 ## TL;DR
 
@@ -169,6 +182,16 @@ or something else) so the second attempt doesn't repeat it.
 
 ## Proposed phased plan (assuming Option 1 is confirmed)
 
+**Status: Steps 2-7 all done and validated 2026-08-01.** Old hand-rolled plumbing
+(`carqna_dapr.py`, `ChatInterface`/`useCarqnaChat`/`carqnaService`, the CopilotKit discovery-protocol
+shimming) is deleted on both repos; `app/page.tsx` runs the real `CopilotChat` + persistent tool-call
+panels; the project owner confirmed live chat, tool calls, and multi-turn context all work at the
+actual `/` route. Docker infra cleanup went further than this plan originally specified — see the
+"Dapr sidecar routing" decision below, updated to match. Explicitly still open: no frontend test
+framework exists (deferred by choice), and the stale template tests that used to live in
+`tests/unit_tests`/`tests/integration_tests` were deleted rather than fixed (CI's pytest step now
+tolerates zero collected tests until real ones are written).
+
 1. **Spike**: validate the actual chosen backend integration path — the `copilotkit` Python SDK
    mounted directly on `carqna_dev` (see "Backend integration path" below), not LangGraph Platform —
    before touching any real UI code. Since a prior attempt at CopilotKit integration failed, treat
@@ -333,29 +356,26 @@ directly on `carqna_dev`) rather than through a Dapr-fronted custom REST/SSE sur
 can be reached by the frontend directly (or via nginx, if a reverse proxy is still wanted) instead
 of via `carqna-dapr` → `-app-id=carqna-service`.
 
-**Note this does *not* remove `carqna-agent` from Docker** — only the `daprd` sidecar container
-goes away. `carqna-dev` (built from `infrastructure/docker/carqna-dev/Dockerfile`, i.e. the actual
-agent code) keeps running as its own container in `docker-compose.yml`. Concretely, in
-`infrastructure/docker/docker-compose.yml`:
+**Superseded 2026-08-01 — what actually shipped went further than the plan below.** The plan as
+originally written assumed `carqna-agent` would stay containerized (`carqna-dev` service kept, just
+pointed at `copilotkit_server.py` instead of `carqna_dapr.py`). In practice the project owner dropped
+Docker for the app layer entirely, not just the Dapr sidecar: `docker-compose.yml` now runs only
+`opensearch`; the agent (`python -m agent.copilotkit_server`) and `carqna-copilot-ui` (`npm run dev`)
+both run directly on the host (see `readme-developmment.md`'s "Running CarQnA" section). Rationale:
+every validation this whole engagement was done host-based anyway, so containerizing those two
+services added a build/rebuild loop for no actual benefit at this stage. `carqna-dev`/
+`carqna-copilot-ui` Dockerfiles, `dapr-config.yaml`, and `nginx.conf` (a reverse proxy that encoded
+the same discovery-protocol/Dapr-invoke-URL guesswork the spike proved wrong) are all deleted. The
+original narrower plan is kept below for history but is no longer what's implemented.
 
-- **Delete** the `carqna-dapr` service block entirely (the `daprd` image, its
-  `-app-id=carqna-service`/`-app-channel-address=carqna-dev`/`-app-port=5001` args, and the
-  `dapr-config.yaml` volume mount).
-- **`carqna-dev` service**: keep the service, but change its `command` from
-  `python -m src.agent.carqna_dapr` to `python -m src.agent.copilotkit_server` — `carqna_dapr.py`
-  (the custom aiohttp service being retired per A3) is renamed to `copilotkit_server.py` and rebuilt
-  around the `copilotkit` Python SDK (see "Backend integration path" decision). Port mapping
-  (`5001:5001` today) should be updated to match whatever port that process listens on.
-- **`carqna-copilot-ui` service**: change `NEXT_PUBLIC_API_BASE` from
-  `http://localhost:3500/v1.0/invoke/carqna-service/method/agent` (the Dapr sidecar URL) to point
-  directly at `carqna-dev`'s host/port, and change `depends_on: carqna-dapr` to
-  `depends_on: carqna-dev` (keeping the `service_healthy` condition, once `carqna-dev`'s healthcheck
-  is updated to hit the new process's health endpoint instead of the retired `/health` route in
-  `carqna_dapr.py`).
-- **`opensearch` service**: unaffected by this change.
-- `infrastructure/docker/dapr-config.yaml` and the `docker/carqna-copilot-ui/Dockerfile`'s
-  relationship to the rest of the compose file are otherwise unaffected; `dapr-config.yaml` itself
-  becomes dead and can be deleted once the `carqna-dapr` service is gone.
+- ~~**Delete** the `carqna-dapr` service block entirely~~ — done, and `carqna-dev` was deleted too,
+  not kept.
+- ~~**`carqna-dev` service**: keep the service, but change its `command`~~ — not kept; runs on host.
+- ~~**`carqna-copilot-ui` service**: change `NEXT_PUBLIC_API_BASE`...~~ — not applicable;
+  `carqnaService.ts` (which defined that env var) was deleted, and the frontend runs on host via
+  `npm run dev`, talking to `/api/copilotkit` (same-origin) which calls `carqna-agent` directly via
+  `CARQNA_AGENT_URL`.
+- **`opensearch` service**: unaffected, as originally planned.
 
 ### Why the earlier CopilotKit attempt was abandoned
 

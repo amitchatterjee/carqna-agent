@@ -1,47 +1,63 @@
-## Setup langsmith
- > Create account in - smith.langchain.com
+## Getting started with Langchain/Langgraph/Langsmith,copilot UI
 
+### Create langsmith account and API key
+ > Create account in - smith.langchain.com
  > Create an API Key
 
-## Create venv and activate it
+### Create a venv and activate it
 ```bash
 python -m venv ~/langsmith.venv
 source ~/langsmith.venv/bin/activate
 ```
 
-## Install langgraph-cli and other tools
+### Install npm
+TODO
+
+### Install langgraph-cli and other tools
 ```bash
 pip install langgraph-cli
 pip install pip-tools
 pip install pytest
 ```
 
-## How to create a new project scaffolding
+### Create a new agent application (example: carqna-agent)
 ```bash
 cd ~/git
 langgraph new carqna-agent  --template new-langgraph-project-python
 ```
 
-## Install runtime dependencies from pyproject.toml
+### Install runtime dependencies from pyproject.toml
 ```bash
 cd ~/git/carqna-agent
+# Extract requirements from the toml
 python -m piptools compile pyproject.toml -o /tmp/requirements.txt
 pip install -r /tmp/requirements.txt
 pip install -e .
 ```
 
-## Build carqna-agent docker container
+# Launch application in development mode
 ```bash
 cd ~/git/carqna-agent
-docker compose -f ./infrastructure/docker/docker-compose.yml build carqna-dev
+langgraph dev
 ```
 
-## Run docker services
+## CarQnA application
+
+### Build infrastructure containers
 ```bash
+cd ~/git/carqna-agent
+docker compose -p '' -f ./infrastructure/docker/docker-compose.yml build
+```
+
+### Run infrastructure services
+```bash
+cd ~/git/carqna-agent
 docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
 ```
 
-## Add OpenSearch users and index permissions
+### One-time setup of Opensearch
+
+#### Add OpenSearch users and index permissions
 
 Use the ndjson fixtures under `./infrastructure/admin/opensearch` to create users and bind them to index-scoped roles.
 
@@ -82,7 +98,7 @@ The example fixtures create two users:
 - `bob` can read and write indices matching `msrp-*`
 
 
-## Setup Opensearch MCP
+#### Setup Opensearch MCP
 
 ```bash
 # get available plugins
@@ -115,39 +131,34 @@ curl -sS \
 
 The AutoGeek MCP server uses an `Authorization` header in [infrastructure/conf/raven/mcp.json](infrastructure/conf/raven/mcp.json); that header is configured with Alice's credentials for the MCP endpoint.
 
-# List anthropic models
+
+### One-time setup of environment variables
+```bash
+cd ~/git/carqna-agent
+cp .env.example to .env
+vi .env
+  # Update the API keys, etc. as needed
+```
+
+### Running CarQnA (Local Interactive Agent)
+
+#### Agent
+```bash
+cd ~/git/carqna-agent
+python -m agent.copilotkit_server
+```
+
+#### UI
+```bash
+cd ~/git/carqna-copilot-ui
+npm run dev
+```
+
+#### Access the user interface
+http://localhost:3000
+
+## Miscellaneous utilities
+### List anthropic models
 ```bash
 curl https://api.anthropic.com/v1/models   -H "x-api-key: $ANTHROPIC_API_KEY"   -H "anthropic-version: 2023-06-01" | jq .
 ```
-
-# Launch development tool
-langgraph dev
-
-## Running CarQnA (Local Interactive Agent)
-
-CarQnA is an interactive local runner for testing the automobile help agent with persistent state management.
-
-**Prerequisites:**
-- Complete all setup steps above
-- Ensure MCP config exists at `./infrastructure/conf/mcp/config.json`
-- Ensure insurance documents exist (default: `./data/virtual-fs/insurance-docs`)
-
-**Environment variables (optional):**
-```bash
-export CHECKPOINT_DB_PATH=./.db.sqlite3          # SQLite database for state persistence
-export INSURANCE_DOCS_ROOT=./data/linux-exec/insurance-docs
-export MCP_CONFIG_PATH=./infrastructure/conf/mcp/config.json
-export LLM_MODEL=claude-sonnet-4-5-20250929
-```
-
-**Run the interactive agent:**
-```bash
-cd ~/git/carqna-agent
-python -m agent.carqna
-```
-
-**Usage:**
-- Ask your automobile questions (pricing, insurance, etc.)
-- Type `quit`, `exit`, or `q` to exit
-- State is persisted across turns using SQLite checkpointer
-- Each session uses thread_id `carqna-local-session` for continuity

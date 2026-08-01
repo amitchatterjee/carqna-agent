@@ -1,7 +1,7 @@
 {
     "AutoGeek": {
         "transport": "streamable_http",
-        "url": "https://opensearch:9200/_plugins/_ml/mcp",
+        "url": "https://localhost:9200/_plugins/_ml/mcp",
         
         "headers": {
             "Authorization": "Basic YWxpY2U6TjchcUwyI3ZQOUB0UjQkaw=="
