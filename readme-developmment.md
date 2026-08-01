@@ -11,7 +11,9 @@ source ~/langsmith.venv/bin/activate
 ```
 
 ### Install npm
-TODO
+```bash
+sudo dnf install nodejs
+```
 
 ### Install langgraph-cli and other tools
 ```bash
