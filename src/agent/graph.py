@@ -248,5 +248,5 @@ try:
     graph = get_graph()
 except Exception:
     # Will be created later in async context (or if MCP fails at import time)
-    logger.debug("Graph not initialized at import time (expected for services like carqna_dapr)")
+    logger.debug("Graph not initialized at import time (expected for services like copilotkit_server)")
     pass

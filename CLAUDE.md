@@ -52,17 +52,20 @@ Three different entry points expose the same `create_graph()` agent for differen
 - **`python -m agent.carqna`** — interactive local CLI runner (`src/agent/carqna.py`) with a
   SQLite-backed checkpointer, single fixed `thread_id="carqna-local-session"` for continuity across
   turns. Useful for quickly exercising the agent without Studio or the frontend.
-- **`python -m agent.carqna_dapr`** — the aiohttp HTTP service (`src/agent/carqna_dapr.py`) that
-  `carqna-copilot-ui` actually talks to via a Dapr sidecar. Exposes `/health`, `/metadata`,
-  `/invoke/chat`, `/invoke/chat/stream` (SSE), `/invoke/init`, plus several CopilotKit-compatible
-  aliases (`/agent`, `/agent/threads`, `/invoke/info`, ...) because CopilotKit probes multiple path
-  shapes. `create_graph` is imported lazily inside `initialize_agent()` so the module can be imported
-  without MCP being reachable.
+- **`python -m agent.copilotkit_server`** — the FastAPI service (`src/agent/copilotkit_server.py`)
+  that `carqna-copilot-ui` actually talks to, via `app/api/copilotkit/route.ts` (a Next.js
+  `CopilotRuntime` route), not directly. Exposes the graph over the **AG-UI protocol**: a single
+  `POST /` endpoint (via `copilotkit.LangGraphAGUIAgent` +
+  `ag_ui_langgraph.add_langgraph_fastapi_endpoint`, streaming raw AG-UI SSE events) plus an
+  auto-added `GET /health`. `create_graph` is imported lazily inside the FastAPI `lifespan` so the
+  module can be imported without MCP being reachable. This replaced an earlier hand-rolled aiohttp
+  service (`carqna_dapr.py`, since deleted) that guessed at a REST/SSE + CopilotKit
+  discovery-protocol shape that turned out not to be how CopilotKit actually integrates — see
+  `.plans/copilot-ui-remediation-plan.md` for that history.
 
 Required env vars (see `.env.example`): `ANTHROPIC_API_KEY`, `MCP_CONFIG_PATH`,
 `INSURANCE_DOCS_ROOT`, `LLM_MODEL` (defaults to `claude-sonnet-4-5-20250929`), `PROMPTS_DIR`
-(defaults to `.`), `CHECKPOINT_DB_PATH` (defaults to `./.db.sqlite3`). For the Dapr service also
-`DAPR_SERVICE_PORT`/`DAPR_SERVICE_NAME`.
+(defaults to `.`), `CHECKPOINT_DB_PATH` (defaults to `./.db.sqlite3`).
 
 ## Architecture
 
@@ -92,13 +95,14 @@ custom `httpx_client_factory`.
 root are loaded at graph-build time via `_load_prompt_from_file()` (relative to `PROMPTS_DIR`). Editing
 agent behavior is often just editing these markdown files rather than Python.
 
-**Event formatting for the frontend**: `carqna_dapr.py`'s `_format_graph_event` / `_extract_command_final_text`
-translate LangGraph's `astream_events` (`on_tool_start`/`on_tool_end`/`on_llm_start`/`on_llm_end`/`on_chain_end`)
-into a flat `GraphEvent` model (`tool_call` / `tool_result` / `llm_thinking` / `final_response` / `error`)
-consumed by the CopilotKit UI over SSE. Because subagents are invoked as a task/delegation tool, their
-final answer can arrive as a `Command` payload on a `tool_end` event rather than a `chain_end` event —
-`_extract_command_final_text` handles both shapes (and a couple of stringified-Command fallbacks). If you
-touch event streaming, be careful not to break this dual-path detection.
+**Event formatting for the frontend**: handled entirely by the `ag-ui-langgraph` package now (see
+`copilotkit_server.py`) — it translates LangGraph's `astream_events` into standard AG-UI SSE frames
+(`TOOL_CALL_START/ARGS/END`, `TEXT_MESSAGE_START/CONTENT/END`, etc.) itself. There's no bespoke
+event-formatting code left in this repo; the old hand-rolled translation (`carqna_dapr.py`'s
+`_format_graph_event`/`_extract_command_final_text`, which had to special-case subagent delegation
+returning a `Command` payload on a `tool_end` event) was deleted along with that file. If a subagent
+delegation's final answer doesn't seem to be surfacing correctly on the frontend, that's now an
+AG-UI/`ag-ui-langgraph` question, not something to patch in this repo.
 
 ## Infrastructure
 
@@ -110,6 +114,12 @@ touch event streaming, be careful not to break this dual-path detection.
   sibling frontend repo via a relative build context `../../../carqna-copilot-ui`). Note the frontend
   talks to the agent through the Dapr sidecar URL
   (`http://localhost:3500/v1.0/invoke/carqna-service/method/agent`), not directly.
+  **Stale as of the `copilotkit_server.py` cutover**: `carqna_dapr.py` has been deleted, so
+  `carqna-dev`'s `command` in this file no longer works, and the frontend no longer talks through the
+  Dapr sidecar at all (`app/api/copilotkit/route.ts` calls `carqna-dev` directly). Updating this
+  compose file (drop `carqna-dapr`, change `carqna-dev`'s command/port, update `carqna-copilot-ui`'s
+  env/`depends_on`) is a deferred follow-up — local host-based dev doesn't need Docker for anything
+  but `opensearch`, so this doesn't block day-to-day work.
 - `admin/opensearch/*.ndjson` — role/user/rolesmapping fixtures for OpenSearch security. Applied with
   the `curl`/`jq` loops documented in `readme-developmment.md`. Default fixture users: `alice`
   (read-only on `msrp-*`), `bob` (read/write on `msrp-*`); the MCP config's `Authorization` header

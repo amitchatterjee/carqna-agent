@@ -13,6 +13,7 @@ source ~/langsmith.venv/bin/activate
 ```bash
 pip install langgraph-cli
 pip install pip-tools
+pip install pytest
 ```
 
 ## How to create a new project scaffolding
