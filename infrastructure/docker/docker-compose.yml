@@ -1,6 +1,29 @@
 
 services:
 
+  postgres:
+    image: postgres
+    restart: always
+    container_name: postgres
+    # set shared memory limit when using docker compose
+    shm_size: 128mb
+    # or set shared memory limit when deploy via swarm stack
+    #volumes:
+    #  - type: tmpfs
+    #    target: /dev/shm
+    #    tmpfs:
+    #      size: 134217728 # 128*2^20 bytes = 128Mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    networks:
+      - carqna-network
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ../../infrastructure/docker/postgres/initdb.d:/docker-entrypoint-initdb.d
+
   opensearch:
     image: opensearch-with-mcp:latest
     build:
@@ -36,13 +59,16 @@ services:
       retries: 5
       start_period: 30s # Crucial: gives OpenSearch time to bootstrap JVM
     networks:
-      - dapr-network
+      - carqna-network
 
 volumes:
   opensearch-data:
     driver: local
     name: opensearch-data
+  postgres-data:
+    driver: local
+    name: postgres-data
 
 networks:
-  dapr-network:
+  carqna-network:
     driver: bridge

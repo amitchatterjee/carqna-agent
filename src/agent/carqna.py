@@ -12,22 +12,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agent.graph import create_graph, _get_checkpointer_conn_string
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.messages import HumanMessage
 
 
 async def main():
-    """Run the automobile help agent locally with SQLite checkpointing."""
+    """Run the automobile help agent locally with Postgres checkpointing."""
     print("🚗 CarQnA - Automobile Help Assistant")
     print("=" * 50)
 
     # Get database connection string and create checkpointer context manager
     conn_string = _get_checkpointer_conn_string()
-    
-    # Use async context manager for proper AsyncSqliteSaver lifecycle
+
+    # Use async context manager for proper AsyncPostgresSaver lifecycle
     print("Initializing agent...")
     try:
-        async with AsyncSqliteSaver.from_conn_string(conn_string) as checkpointer:
+        async with AsyncPostgresSaver.from_conn_string(conn_string) as checkpointer:
+            await checkpointer.setup()
             agent = await create_graph(checkpointer=checkpointer)
             
             # Use a persistent thread for multi-turn conversation

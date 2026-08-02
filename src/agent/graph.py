@@ -15,7 +15,6 @@ from typing import Any
 from deepagents import FilesystemPermission, create_deep_agent, SubAgent
 from deepagents.backends import FilesystemBackend
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from dotenv import load_dotenv
 import httpx
 
@@ -89,20 +88,20 @@ def _create_httpx_factory():
 
 
 def _get_checkpointer_conn_string() -> str:
-    """Get the SQLite database connection string.
-    
+    """Get the Postgres checkpointer connection string.
+
     For local development use only. LangGraph API handles persistence automatically.
-    
+
     Returns:
-        Connection string for AsyncSqliteSaver.from_conn_string()
-        Reads from CHECKPOINT_DB_PATH environment variable.
-        Defaults to './.db.sqlite3' if not set.
+        Connection string for AsyncPostgresSaver.from_conn_string()
+        Reads from CHECKPOINT_POSTGRES_URI environment variable.
+        Defaults to the local `convmem` database (see
+        infrastructure/docker/postgres/initdb.d/init_user.sh) if not set.
     """
-    default_db_path = "./.db.sqlite3"
-    db_path = os.getenv("CHECKPOINT_DB_PATH", default_db_path)
-    db_path = os.path.expanduser(db_path)
-    logger.info(f"Using checkpoint database at: {db_path}")
-    return db_path
+    default_uri = "postgresql://convmem:convmem@localhost:5432/convmem"
+    conn_string = os.getenv("CHECKPOINT_POSTGRES_URI", default_uri)
+    logger.info(f"Using checkpoint database at: {conn_string.split('@')[-1]}")
+    return conn_string
 
 
 async def _initialize_mcp_tools():

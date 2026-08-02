@@ -56,6 +56,9 @@ docker compose -p '' -f ./infrastructure/docker/docker-compose.yml build
 cd ~/git/carqna-agent
 docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
 ```
+Brings up `opensearch` and `postgres` (checkpointer storage for multi-turn conversation state).
+Postgres needs no manual bootstrap — `infrastructure/docker/postgres/initdb.d/init_user.sh` creates
+the `convmem` user/database automatically on first start.
 
 ### One-time setup of Opensearch
 
@@ -98,6 +101,27 @@ done < "./infrastructure/admin/opensearch/rolesmapping.ndjson"
 The example fixtures create two users:
 - `alice` can read indices matching `msrp-*`
 - `bob` can read and write indices matching `msrp-*`
+
+
+#### Build Opensearch MCP content
+
+```bash
+# Clear existing msrp index data. Only execute this when you want to clear the data, the commands below this one will upsert the content if the content already exists
+curl -k -u 'admin:openSearch$2025' -X DELETE "https://localhost:9200/msrp?ignore_unavailable=true"
+
+# Load msrp index
+curl -sS -H "Content-Type: application/x-ndjson" \
+  -u 'bob:X5@mD8!zH3#uC1%w' \
+  --data-binary @"$KNOWLEDGEXPERT_HOME/data/opensearch/msrp/toyota-2025-msrp-bulk.ndjson" \
+  --insecure \
+  "https://localhost:9200/_bulk"
+
+curl -k -X PUT "https://localhost:9200/msrp/_mapping" \
+  -H "Content-Type: application/json" \
+  -u 'admin:openSearch$2025' \
+  --data-binary @"$KNOWLEDGEXPERT_HOME/data/opensearch/msrp/msrp-mappings.json"
+
+```
 
 
 #### Setup Opensearch MCP

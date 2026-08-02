@@ -9,8 +9,8 @@ LangGraph + [DeepAgents](https://github.com/langchain-ai/deepagents). It's paire
 repo `carqna-copilot-ui` (Next.js + CopilotKit frontend, `~/git/carqna-copilot-ui`), which talks to
 this service over the AG-UI protocol via a Next.js `CopilotRuntime` route, not directly and not
 through Dapr. This repo owns the agent logic itself plus the infrastructure (Docker Compose,
-OpenSearch) needed to run it locally — Docker is used for OpenSearch only; the agent and frontend
-both run directly on the host.
+OpenSearch, Postgres) needed to run it locally — Docker is used for OpenSearch and Postgres only;
+the agent and frontend both run directly on the host.
 
 Do not read or reference the `.plans/` folder — it is out of scope.
 
@@ -52,7 +52,7 @@ Three different entry points expose the same `create_graph()` agent for differen
 - **`langgraph dev`** — LangGraph Studio, driven by `langgraph.json` (`graphs.agent` →
   `src/agent/graph.py:graph`). Persistence handled automatically by the LangGraph API.
 - **`python -m agent.carqna`** — interactive local CLI runner (`src/agent/carqna.py`) with a
-  SQLite-backed checkpointer, single fixed `thread_id="carqna-local-session"` for continuity across
+  Postgres-backed checkpointer, single fixed `thread_id="carqna-local-session"` for continuity across
   turns. Useful for quickly exercising the agent without Studio or the frontend.
 - **`python -m agent.copilotkit_server`** — the FastAPI service (`src/agent/copilotkit_server.py`)
   that `carqna-copilot-ui` actually talks to, via `app/api/copilotkit/route.ts` (a Next.js
@@ -63,11 +63,15 @@ Three different entry points expose the same `create_graph()` agent for differen
   module can be imported without MCP being reachable. This replaced an earlier hand-rolled aiohttp
   service (`carqna_dapr.py`, since deleted) that guessed at a REST/SSE + CopilotKit
   discovery-protocol shape that turned out not to be how CopilotKit actually integrates — see
-  `.plans/copilot-ui-remediation-plan.md` for that history.
+  `.plans/001-2026-07-24-copilot-ui-remediation-plan-DONE.md` for that history. Multi-turn state
+  uses a Postgres checkpointer (`AsyncPostgresSaver`, the `convmem` database — see
+  `.plans/002-2026-08-02-postgres-checkpointer-plan.md`), shared with `carqna.py` via
+  `graph.py`'s `_get_checkpointer_conn_string()` helper. Postgres requires an explicit
+  `await checkpointer.setup()` call (idempotent, run on every startup) that SQLite never needed.
 
 Required env vars (see `.env.example`): `ANTHROPIC_API_KEY`, `MCP_CONFIG_PATH`,
 `INSURANCE_DOCS_ROOT`, `LLM_MODEL` (defaults to `claude-sonnet-4-5-20250929`), `PROMPTS_DIR`
-(defaults to `.`), `CHECKPOINT_DB_PATH` (defaults to `./.db.sqlite3`).
+(defaults to `.`), `CHECKPOINT_POSTGRES_URI` (defaults to the local `convmem` Postgres database).
 
 ## Architecture
 
@@ -108,15 +112,17 @@ AG-UI/`ag-ui-langgraph` question, not something to patch in this repo.
 
 ## Infrastructure
 
-Docker is used for `opensearch` only. The agent (`copilotkit_server.py`) and `carqna-copilot-ui`
-both run directly on the host (see `readme-developmment.md`) — this replaced an earlier setup that
-also containerized the agent and frontend behind a Dapr sidecar (`carqna-dapr`) and an nginx reverse
-proxy; that whole layer (`carqna-dev`/`carqna-copilot-ui`/`carqna-dapr` Dockerfiles, `dapr-config.yaml`,
-`nginx.conf`) has been removed, since host-based dev was always the actual flow used to validate this
-app and the extra containers/proxy added nothing.
+Docker is used for `opensearch` and `postgres` only. The agent (`copilotkit_server.py`) and
+`carqna-copilot-ui` both run directly on the host (see `readme-developmment.md`) — this replaced an
+earlier setup that also containerized the agent and frontend behind a Dapr sidecar (`carqna-dapr`)
+and an nginx reverse proxy; that whole layer (`carqna-dev`/`carqna-copilot-ui`/`carqna-dapr`
+Dockerfiles, `dapr-config.yaml`, `nginx.conf`) has been removed, since host-based dev was always the
+actual flow used to validate this app and the extra containers/proxy added nothing.
 
-- `docker/docker-compose.yml` — one service, `opensearch` (custom image with the MCP plugin, built
-  from `docker/opensearch-mcp/`).
+- `docker/docker-compose.yml` — two services: `opensearch` (custom image with the MCP plugin, built
+  from `docker/opensearch-mcp/`) and `postgres` (checkpointer storage — the `convmem` user/database
+  are created automatically on first start by `docker/postgres/initdb.d/init_user.sh`, no manual
+  bootstrap needed, unlike OpenSearch below).
   ```bash
   docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
   ```
