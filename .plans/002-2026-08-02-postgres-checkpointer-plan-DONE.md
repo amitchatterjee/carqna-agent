@@ -1,6 +1,19 @@
 # Move the checkpointer from SQLite to Postgres
 
-Status: **in progress**, started 2026-08-02.
+Status: **DONE, validated end-to-end 2026-08-06** by the project owner. Verification steps 1-7
+(Postgres up, backend starts, `checkpointer.setup()` creates tables cleanly, multi-turn conversation
+through the real UI, context survives a backend restart, `carqna.py` CLI runner too) all passed.
+Step 8 (`mypy --strict`) was not run — optional, not a blocker. Not committed yet.
+
+**One real bug found and fixed along the way**: the first version of
+`infrastructure/docker/postgres/initdb.d/init_user.sh` ran `GRANT ALL ON SCHEMA public TO convmem`
+in the same `psql` session as `CREATE DATABASE convmem`, connected to `$POSTGRES_DB` (defaults to
+`postgres`) — so the grant landed on the wrong database's `public` schema. PG15+ no longer grants
+`CREATE` on `public` to `PUBLIC` by default (a real behavior change from PG14), and that revocation
+is per-database, so `checkpointer.setup()`'s first `CREATE TABLE` failed with
+`psycopg.errors.InsufficientPrivilege`. Fixed by giving the schema grant its own `psql` session
+connected directly to `--dbname convmem`. Required dropping and recreating the `postgres-data`
+Docker volume, since `initdb.d/` scripts only run once, on a fresh volume.
 
 ## Context
 
@@ -20,10 +33,13 @@ consistent backend everywhere.
 
 ## Changes
 
-- **`pyproject.toml`**: add `langgraph-checkpoint-postgres` as a dependency (pulls in `psycopg`;
-  confirm the exact extras — e.g. `psycopg[binary,pool]` — from what `pip install` actually resolves
-  rather than hardcoding a guess). Remove `langgraph-checkpoint-sqlite` and `aiosqlite`, unused once
-  both entrypoints move off sqlite.
+- **`pyproject.toml`**: add `langgraph-checkpoint-postgres` as a dependency. Confirmed via PyPI's
+  `requires_dist` metadata that it declares `psycopg>=3.2.0` and `psycopg-pool>=3.2.0` as hard
+  transitive deps, so a driver is pulled in automatically — but that's plain `psycopg`, not
+  `psycopg[binary]`, which needs `libpq` present on the system to actually connect or it can fail at
+  import/runtime. Added `psycopg[binary]>=3.2.0` explicitly to guarantee a working install regardless
+  of host `libpq` availability. Remove `langgraph-checkpoint-sqlite` and `aiosqlite`, unused once both
+  entrypoints move off sqlite.
 
 - **`src/agent/graph.py`**: replace `_get_checkpointer_conn_string()` (currently returns a sqlite
   file path from `CHECKPOINT_DB_PATH`) with an equivalent that builds a Postgres connection string

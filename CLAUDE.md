@@ -65,7 +65,7 @@ Three different entry points expose the same `create_graph()` agent for differen
   discovery-protocol shape that turned out not to be how CopilotKit actually integrates — see
   `.plans/001-2026-07-24-copilot-ui-remediation-plan-DONE.md` for that history. Multi-turn state
   uses a Postgres checkpointer (`AsyncPostgresSaver`, the `convmem` database — see
-  `.plans/002-2026-08-02-postgres-checkpointer-plan.md`), shared with `carqna.py` via
+  `.plans/002-2026-08-02-postgres-checkpointer-plan-DONE.md`), shared with `carqna.py` via
   `graph.py`'s `_get_checkpointer_conn_string()` helper. Postgres requires an explicit
   `await checkpointer.setup()` call (idempotent, run on every startup) that SQLite never needed.
 
