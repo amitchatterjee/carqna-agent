@@ -166,7 +166,7 @@ vi .env
   # Update the API keys, etc. as needed
 ```
 
-### Running CarQnA (Local Interactive Agent)
+### Running CarQnA from the web interface
 
 #### Agent
 ```bash
@@ -182,6 +182,14 @@ npm run dev
 
 #### Access the user interface
 http://localhost:3000
+
+### Running CarQnA using cli
+
+#### Agent
+```bash
+cd ~/git/carqna-agent
+python -m agent.carqna_cli
+```
 
 ## Miscellaneous utilities
 ### List anthropic models
