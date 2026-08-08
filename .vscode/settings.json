@@ -1,5 +1,5 @@
 {
-    "python.defaultInterpreterPath": "${env:HOME}/langsmith.venv/bin/python",
+    "python.defaultInterpreterPath": "${env:HOME}/carqna.venv/bin/python",
     "python-envs.pythonProjects": [
         {
             "path": ".",

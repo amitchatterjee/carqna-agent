@@ -25,7 +25,8 @@ dependencies = [
     "copilotkit>=0.1.94",
     "uvicorn>=0.51.0",
     "opentelemetry-exporter-otlp>=1.44.0",
-    "opentelemetry-sdk>=1.44.0"
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-instrumentation-fastapi>=0.65b0"
 ]
 
 

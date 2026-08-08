@@ -72,6 +72,16 @@ Required env vars (see `.env.example`): `ANTHROPIC_API_KEY`, `MCP_CONFIG_PATH`,
 `INSURANCE_DOCS_ROOT`, `LLM_MODEL` (defaults to `claude-sonnet-4-5-20250929`), `PROMPTS_DIR`
 (defaults to `.`), `CHECKPOINT_POSTGRES_URI` (defaults to the local `convmem` Postgres database).
 
+Optional: `LANGSMITH_TRACING_V2=true` + `LANGSMITH_TRACING_MODE=hybrid|otel` +
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces`/`OTEL_SERVICE_NAME` route
+LangChain/LangGraph traces to a local Jaeger instance (the `jaeger` service in `docker-compose.yml`,
+UI at `http://localhost:16686`) via `langsmith`'s built-in OTel exporter — no extra dependencies or
+code changes needed, it's pure env config. `hybrid` also keeps sending to LangSmith cloud
+(`LANGSMITH_API_KEY`/`LANGSMITH_PROJECT` above); use `otel` to send to Jaeger only. **Must be port
+`4318` (HTTP) with the `/v1/traces` path, not `4317`/gRPC** — `langsmith`'s exporter is hardcoded to
+HTTP and passes this value straight to the exporter without appending the path itself, unlike the
+OTel SDK's own env-var handling (see `.env.example`'s comment for the full explanation).
+
 ## Architecture
 
 The agent is a **DeepAgents supervisor/subagent graph**, all built in `src/agent/graph.py`:
@@ -111,17 +121,19 @@ AG-UI/`ag-ui-langgraph` question, not something to patch in this repo.
 
 ## Infrastructure
 
-Docker is used for `opensearch` and `postgres` only. The agent (`copilotkit_server.py`) and
+Docker is used for `opensearch`, `postgres`, and `jaeger` only. The agent (`copilotkit_server.py`) and
 `carqna-copilot-ui` both run directly on the host (see `readme-developmment.md`) — this replaced an
 earlier setup that also containerized the agent and frontend behind a Dapr sidecar (`carqna-dapr`)
 and an nginx reverse proxy; that whole layer (`carqna-dev`/`carqna-copilot-ui`/`carqna-dapr`
 Dockerfiles, `dapr-config.yaml`, `nginx.conf`) has been removed, since host-based dev was always the
 actual flow used to validate this app and the extra containers/proxy added nothing.
 
-- `docker/docker-compose.yml` — two services: `opensearch` (custom image with the MCP plugin, built
-  from `docker/opensearch-mcp/`) and `postgres` (checkpointer storage — the `convmem` user/database
-  are created automatically on first start by `docker/postgres/initdb.d/init_user.sh`, no manual
-  bootstrap needed, unlike OpenSearch below).
+- `docker/docker-compose.yml` — three services: `opensearch` (custom image with the MCP plugin,
+  built from `docker/opensearch-mcp/`), `postgres` (checkpointer storage — the `convmem`
+  user/database are created automatically on first start by
+  `docker/postgres/initdb.d/init_user.sh`, no manual bootstrap needed, unlike OpenSearch below), and
+  `jaeger` (`jaegertracing/all-in-one`, OTLP receiver on `4317`/gRPC and `4318`/HTTP, UI on
+  `16686` — see the OTel env vars above).
   ```bash
   docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
   ```
