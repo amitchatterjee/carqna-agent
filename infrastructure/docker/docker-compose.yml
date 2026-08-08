@@ -61,6 +61,19 @@ services:
     networks:
       - carqna-network
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger Web UI
+      - "4317:4317"    # OpenTelemetry gRPC receiver
+      - "4318:4318"    # OpenTelemetry HTTP receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+    networks:
+      - carqna-network
+
 volumes:
   opensearch-data:
     driver: local

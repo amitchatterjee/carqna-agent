@@ -6,8 +6,8 @@
 
 ### Create a venv and activate it
 ```bash
-python -m venv ~/langsmith.venv
-source ~/langsmith.venv/bin/activate
+python3.13 -m venv ~/carqna.venv
+source ~/carqna.venv/bin/activate
 ```
 
 ### Install npm
@@ -15,12 +15,13 @@ source ~/langsmith.venv/bin/activate
 sudo dnf install nodejs
 ```
 
-### Install langgraph-cli and other tools
+### Install uv
+`uv` (https://docs.astral.sh/uv/) drives dependency installation from here on — check it's
+available:
 ```bash
-pip install langgraph-cli
-pip install pip-tools
-pip install pytest
+uv --version
 ```
+(installed system-wide already on most dev boxes; see astral's install docs if not.)
 
 ### Create a new agent application (example: carqna-agent)
 ```bash
@@ -28,14 +29,18 @@ cd ~/git
 langgraph new carqna-agent  --template new-langgraph-project-python
 ```
 
-### Install runtime dependencies from pyproject.toml
+### Install runtime + dev dependencies from pyproject.toml / uv.lock
 ```bash
 cd ~/git/carqna-agent
-# Extract requirements from the toml
-python -m piptools compile pyproject.toml -o /tmp/requirements.txt
-pip install -r /tmp/requirements.txt
-pip install -e .
+uv sync --active
 ```
+`--active` installs into the already-activated `~/carqna.venv` instead of `uv`'s own project-local
+`.venv` (which is `uv sync`'s default, and would silently ignore the venv you just created/activated
+above). This reads the pinned versions straight from `uv.lock`.
+
+Whenever `pyproject.toml`'s dependencies change, re-run `uv lock` and commit the updated `uv.lock` —
+it's checked into git specifically so everyone (and every fresh venv) resolves the identical
+dependency graph instead of drifting apart over time.
 
 # Launch application in development mode
 ```bash

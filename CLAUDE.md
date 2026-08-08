@@ -19,13 +19,12 @@ Do not read or reference the `.plans/` folder — it is out of scope.
 Uses `uv`/`pip` with `pyproject.toml`. Package name is `agent`, source lives under `src/agent`.
 
 ```bash
-# install
-pip install -e . "langgraph-cli[inmem]"
+# install (into an already-activated venv -- see readme-developmment.md for the
+# Python-version gotcha with the langgraph-cli[inmem] -> jsonschema-rs build)
+uv sync --active
 
 # run all unit tests
-make test                        # == python -m pytest tests/unit_tests/
-make test TEST_FILE=tests/unit_tests/test_configuration.py   # single file
-python -m pytest tests/unit_tests/test_configuration.py::test_name   # single test
+make test                        # == python -m pytest tests/unit_tests/ (currently empty, stale template tests removed)
 
 # integration tests (hit a real graph invocation)
 make integration_tests
