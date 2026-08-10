@@ -1,7 +1,16 @@
 # OAuth2/OIDC auth (Okta/Auth0) across carqna-agent and carqna-copilot-ui
 
-Status: **INPROG (approved, not yet implemented)** — approved 2026-08-09. Per explicit instruction,
-implementation does not start until separately told to; this file documents the approved plan.
+Status: **DONE** — approved 2026-08-09, implemented and verified 2026-08-10. Backend and frontend
+code both live on `feature/okta` in both repos. End-to-end verification passed: login redirects to
+Auth0, a real chat message round-trips through the authenticated `POST /` route, and the Postgres
+`checkpoints.thread_id` column confirms the composite-key design works
+(`auth0|6a78d5504c69cc8f16465b81:61d7d9f3-68b3-4bcf-aeff-f15b6e2a79cb` — verified `sub` claim +
+client-supplied thread id, exactly as designed). One dashboard prerequisite not called out explicitly
+enough in the original plan: the Auth0 Application must be explicitly authorized against the API via
+a **client grant** (Auth0 Dashboard → APIs → the API → "Machine to Machine Applications" tab — despite
+the name, this is where any application type, including this Regular Web App, gets authorized against
+an audience), or the callback fails with `Client "..." is not authorized to access resource server
+"..."`. This file is renamed to this plan's final `-DONE` form per this project's naming convention.
 
 **Progress on prerequisites — all done**: Auth0 API created, Identifier/audience is
 `https://carqna-agent/api`. Application's Allowed Callback/Logout URLs set to
