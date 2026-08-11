@@ -1,7 +1,16 @@
 # OAuth2/OIDC auth (Okta/Auth0) across carqna-agent and carqna-copilot-ui
 
-Status: **INPROG (approved, not yet implemented)** — approved 2026-08-09. Per explicit instruction,
-implementation does not start until separately told to; this file documents the approved plan.
+Status: **DONE** — approved 2026-08-09, implemented and verified 2026-08-10. Backend and frontend
+code both live on `feature/okta` in both repos. End-to-end verification passed: login redirects to
+Auth0, a real chat message round-trips through the authenticated `POST /` route, and the Postgres
+`checkpoints.thread_id` column confirms the composite-key design works
+(`auth0|6a78d5504c69cc8f16465b81:61d7d9f3-68b3-4bcf-aeff-f15b6e2a79cb` — verified `sub` claim +
+client-supplied thread id, exactly as designed). One dashboard prerequisite not called out explicitly
+enough in the original plan: the Auth0 Application must be explicitly authorized against the API via
+a **client grant** (Auth0 Dashboard → APIs → the API → "Machine to Machine Applications" tab — despite
+the name, this is where any application type, including this Regular Web App, gets authorized against
+an audience), or the callback fails with `Client "..." is not authorized to access resource server
+"..."`. This file is renamed to this plan's final `-DONE` form per this project's naming convention.
 
 **Progress on prerequisites — all done**: Auth0 API created, Identifier/audience is
 `https://carqna-agent/api`. Application's Allowed Callback/Logout URLs set to
@@ -11,6 +20,19 @@ populated — `carqna-agent/.env`: `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`; `carqna-cop
 `APP_BASE_URL=http://localhost:3000`, `AUTH0_AUDIENCE` (same value as the agent's). All prerequisites
 from the "Prerequisites" section below are now satisfied — remaining work is the actual code
 (Backend/Frontend sections), not yet started, still gated on explicit go-ahead.
+
+**Two more dashboard gotchas found post-implementation (2026-08-11), on top of the client-grant one
+above** — both now documented in `readme-developmment.md`'s "One-time setup of Auth0/Okta" section:
+- **A database connection must exist and be associated with the Application**, or `carqna` has no
+  connection to actually authenticate users against. Auth0 dashboard → Authentication → Database →
+  Create DB Connection (name `Username-Password-Authentication`, defaults otherwise) → open its
+  Applications tab → select `carqna`.
+- **Allowed Logout URLs needs the bare app base URL** (`http://localhost:3000`), not
+  `/auth/callback` or `/auth/logout` — `@auth0/nextjs-auth0`'s `/auth/logout` route defaults
+  `returnTo` to `appBaseUrl` itself when no explicit `returnTo` query param is passed
+  (`auth-client.js`: `const returnTo = req.nextUrl.searchParams.get("returnTo") || appBaseUrl;`).
+  Registering only a path-suffixed URL there produces Auth0's generic hosted "Oops, something went
+  wrong" error page on logout, with no useful detail — the mismatch is the whole story.
 
 ## Context
 

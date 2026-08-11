@@ -28,6 +28,8 @@ dependencies = [
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-instrumentation-fastapi>=0.65b0",
     "auth0-server-python>=1.0.0b1,<2",
+    "pyjwt>=2.8.0",
+    "psycopg-pool>=3.2.0",
 ]
 
 

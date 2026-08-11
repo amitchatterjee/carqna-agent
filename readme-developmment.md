@@ -171,6 +171,63 @@ vi .env
   # Update the API keys, etc. as needed
 ```
 
+### One-time setup of Auth0/Okta
+
+CarQnA uses Auth0 (Okta) for OAuth2/OIDC login: `carqna-copilot-ui` redirects users to Auth0 to log
+in, and `carqna-agent` verifies the resulting access token on every request. See
+`.plans/004-2026-08-09-oauth2-okta-auth-plan-DONE.md` for the full design and
+`.plans/005-2026-08-10-user-tracking-plan-DONE.md` for how user identity gets tracked afterward.
+
+1. **Create an Application** (Auth0 dashboard → Applications → Applications → Create Application):
+   - Name: `carqna`
+   - Application Type: `Regular Web Application`
+   - Settings tab:
+     - Allowed Callback URLs: `http://localhost:3000/auth/callback`
+     - Allowed Logout URLs: `http://localhost:3000`
+
+2. **Create a database connection** (Auth0 dashboard → Authentication → Database → Create DB
+   Connection):
+   - Name: `Username-Password-Authentication`, otherwise leave the defaults as-is.
+   - Associate it with the Application: open the connection's settings, go to its **Applications
+     tab**, and select `carqna`. Without this, `carqna` has no connection to actually authenticate
+     users against.
+
+3. **Create an API** (Auth0 dashboard → Applications → APIs → Create API):
+   - Name: `carqna`
+   - Identifier: `https://carqna-agent/api`
+   - **Application Access tab**: grant `carqna` (the Application from step 1) access. Easy to miss —
+     without it, login fails at the callback with `Client "..." is not authorized to access resource
+     server "https://carqna-agent/api"` (an `invalid_request` OAuth2Error), even though the
+     API/audience itself exists and every env var is already correct.
+
+4. **Add a user** (Auth0 dashboard → User Management → Users → Create User):
+   - Settings tab: email, name, etc.
+   - Authorized Applications tab: add `carqna` as an authorized application for this user.
+
+#### Environment variables
+
+Both repos need Auth0 values, but split by role: `carqna-agent` only *verifies* tokens (resource
+server), while `carqna-copilot-ui` is what actually performs the login/token-exchange flow (client).
+Copy each repo's `.env.example` (`cp .env.example .env` / `cp .env.example .env.local`) and fill in:
+
+**`carqna-agent/.env`**:
+
+| Variable         | Where to find it                                              |
+|------------------|-----------------------------------------------------------------|
+| `AUTH0_DOMAIN`   | Application (step 1) → Settings tab → Domain                    |
+| `AUTH0_AUDIENCE` | The API Identifier from step 2 (`https://carqna-agent/api`)     |
+
+**`carqna-copilot-ui/.env.local`**:
+
+| Variable              | Where to find it                                            |
+|-----------------------|---------------------------------------------------------------|
+| `AUTH0_DOMAIN`         | Same tenant domain as above                                   |
+| `AUTH0_CLIENT_ID`      | Application (step 1) → Settings tab → Client ID                |
+| `AUTH0_CLIENT_SECRET`  | Application (step 1) → Settings tab → Client Secret             |
+| `AUTH0_SECRET`         | Generate with `openssl rand -hex 32`                          |
+| `APP_BASE_URL`         | `http://localhost:3000`                                       |
+| `AUTH0_AUDIENCE`       | Must match `carqna-agent`'s `AUTH0_AUDIENCE` exactly            |
+
 ### Running CarQnA from the web interface
 
 #### Agent
@@ -186,7 +243,9 @@ npm run dev
 ```
 
 #### Access the user interface
-http://localhost:3000
+Using a browser, open URL - http://localhost:3000 . Login using OKTA assigned user/password, if prompted. 
+
+To logout, open URL - http://localhost:3000/auth/logout
 
 ### Running CarQnA using cli
 
@@ -201,3 +260,55 @@ python -m agent.carqna_cli
 ```bash
 curl https://api.anthropic.com/v1/models   -H "x-api-key: $ANTHROPIC_API_KEY"   -H "anthropic-version: 2023-06-01" | jq .
 ```
+
+### Access the `convmem` Postgres database
+```bash
+PGPASSWORD=convmem psql -h localhost -U convmem -d convmem
+```
+List tables from inside `psql` with `\dt`.
+
+#### `checkpoints`, `checkpoint_writes`, `checkpoint_blobs`, `checkpoint_migrations`
+
+LangGraph's own tables (`AsyncPostgresSaver`, created/migrated automatically by
+`checkpointer.setup()` on every startup — never hand-edit these). Together they hold the full
+multi-turn conversation state for every thread:
+
+- `checkpoints` — one row per saved graph step. Key columns: `thread_id` (see below),
+  `checkpoint_ns`, `checkpoint_id`, `parent_checkpoint_id` (links steps into a history chain),
+  `checkpoint`/`metadata` (`jsonb` — the actual serialized graph state).
+- `checkpoint_writes` — pending/intermediate channel writes within a step (`thread_id`,
+  `checkpoint_id`, `task_id`, `channel`, `blob`).
+- `checkpoint_blobs` — larger serialized channel values stored separately from `checkpoints.checkpoint`
+  (`thread_id`, `channel`, `version`, `blob`).
+- `checkpoint_migrations` — single `v` column, LangGraph's own internal schema-version marker.
+
+**`thread_id` is `{auth0_user_id}:{client_supplied_thread_id}`** (e.g.
+`auth0|6a78d5504c69cc8f16465b81:61d7d9f3-68b3-4bcf-aeff-f15b6e2a79cb`) — built server-side in
+`copilotkit_server.py`'s `POST /` route from the verified JWT `sub` claim, never trusted from the
+client. This is what makes one user structurally unable to read/continue another user's conversation
+even if they somehow learned the raw thread id. See
+`.plans/004-2026-08-09-oauth2-okta-auth-plan-DONE.md`. Rows with a bare UUID or names like
+`debug-*`/`carqna-local-session` predate this and are orphaned pre-auth test data.
+
+Useful query — list a given user's threads:
+```sql
+SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE 'auth0|6a78d5504c69cc8f16465b81:%';
+```
+
+#### `user_registry`
+
+Created by `infrastructure/docker/postgres/initdb.d/users_registry.sh` (not by application code — see
+`.plans/005-2026-08-10-user-tracking-plan-DONE.md`). Maps the same opaque `auth0|...` id used in
+`checkpoints.thread_id` to a human identity, fetched from Auth0's `/userinfo` endpoint the first time
+each user is ever seen:
+
+| Column           | Meaning                                                              |
+|------------------|-----------------------------------------------------------------------|
+| `user_id`        | JWT `sub` claim (primary key) — matches the prefix in `checkpoints.thread_id` |
+| `email`          | From Auth0's `/userinfo`                                              |
+| `name`           | From Auth0's `/userinfo` (falls back to the email string if no separate display name is set) |
+| `first_seen_at`  | First authenticated request from this user                            |
+| `last_seen_at`   | Updated on every authenticated request                                |
+
+This is groundwork for the still-deferred multi-session picker feature (listing/switching between a
+user's own named conversations, like Claude Code) — not itself surfaced in the UI yet.
