@@ -21,6 +21,19 @@ populated — `carqna-agent/.env`: `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`; `carqna-cop
 from the "Prerequisites" section below are now satisfied — remaining work is the actual code
 (Backend/Frontend sections), not yet started, still gated on explicit go-ahead.
 
+**Two more dashboard gotchas found post-implementation (2026-08-11), on top of the client-grant one
+above** — both now documented in `readme-developmment.md`'s "One-time setup of Auth0/Okta" section:
+- **A database connection must exist and be associated with the Application**, or `carqna` has no
+  connection to actually authenticate users against. Auth0 dashboard → Authentication → Database →
+  Create DB Connection (name `Username-Password-Authentication`, defaults otherwise) → open its
+  Applications tab → select `carqna`.
+- **Allowed Logout URLs needs the bare app base URL** (`http://localhost:3000`), not
+  `/auth/callback` or `/auth/logout` — `@auth0/nextjs-auth0`'s `/auth/logout` route defaults
+  `returnTo` to `appBaseUrl` itself when no explicit `returnTo` query param is passed
+  (`auth-client.js`: `const returnTo = req.nextUrl.searchParams.get("returnTo") || appBaseUrl;`).
+  Registering only a path-suffixed URL there produces Auth0's generic hosted "Oops, something went
+  wrong" error page on logout, with no useful detail — the mismatch is the whole story.
+
 ## Context
 
 Today, `copilotkit_server.py`'s AG-UI endpoint is completely open — `ag_ui_langgraph` pulls

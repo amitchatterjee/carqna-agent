@@ -3,18 +3,18 @@ picker feature (see .plans/004-2026-08-09-oauth2-okta-auth-plan-DONE.md's
 "Explicitly deferred" section).
 
 Deliberately doesn't touch the LangGraph checkpoint key (still the opaque
-`sub`-based composite key) -- this is a separate `users` table mapping that
-opaque `user_id` to a human-readable identity (email/name), fetched via the
-standard OIDC `/userinfo` endpoint using the same access token `auth.py`
+`sub`-based composite key) -- this is a separate `user_registry` table mapping
+that opaque `user_id` to a human-readable identity (email/name), fetched via
+the standard OIDC `/userinfo` endpoint using the same access token `auth.py`
 already verifies. No Auth0-specific dashboard config needed: `src/lib/auth0.ts`
 (carqna-copilot-ui) doesn't override `authorizationParameters.scope`, so the
 SDK's default scopes (`openid profile email offline_access`) are already on
 every access token, which is what makes `/userinfo` work here.
 
-The `users` table's DDL lives in
-infrastructure/docker/postgres/initdb.d/users_table.sh (same convention as the
-convmem database/role itself in init_user.sh), not here -- this module trusts
-the table already exists rather than creating it at runtime.
+The `user_registry` table's DDL lives in
+infrastructure/docker/postgres/initdb.d/users_registry.sh (same convention as
+the convmem database/role itself in init_user.sh), not here -- this module
+trusts the table already exists rather than creating it at runtime.
 """
 
 import logging
@@ -54,14 +54,14 @@ async def track_user(pool: AsyncConnectionPool, user_id: str, access_token: str)
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "UPDATE users SET last_seen_at = now() WHERE user_id = %s",
+                    "UPDATE user_registry SET last_seen_at = now() WHERE user_id = %s",
                     (user_id,),
                 )
                 if cur.rowcount == 0:
                     email, name = await _fetch_userinfo(access_token)
                     await cur.execute(
                         """
-                        INSERT INTO users (user_id, email, name)
+                        INSERT INTO user_registry (user_id, email, name)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (user_id) DO UPDATE SET last_seen_at = now()
                         """,

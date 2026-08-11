@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
     conn_string = _get_checkpointer_conn_string()
 
-    # Separate small pool for the `users` table (see agent/user_tracking.py) --
+    # Separate small pool for the `user_registry` table (see agent/user_tracking.py) --
     # deliberately not sharing AsyncPostgresSaver's internal pool, to keep this
     # groundwork decoupled from its (unrelated) checkpoint persistence.
     user_pool = AsyncConnectionPool(conn_string, open=False)
@@ -71,8 +71,8 @@ async def lifespan(app: FastAPI):
 
                 # Groundwork for the deferred multi-session picker feature --
                 # maps the opaque user_id to a human identity (email/name) in a
-                # separate `users` table. Never blocks/fails the actual chat
-                # request (see user_tracking.track_user's own try/except).
+                # separate `user_registry` table. Never blocks/fails the actual
+                # chat request (see user_tracking.track_user's own try/except).
                 await track_user(user_pool, user_id, get_bearer_token(request))
 
                 # Never trust a client-supplied user id -- the composite key is

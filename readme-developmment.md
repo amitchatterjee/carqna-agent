@@ -183,9 +183,16 @@ in, and `carqna-agent` verifies the resulting access token on every request. See
    - Application Type: `Regular Web Application`
    - Settings tab:
      - Allowed Callback URLs: `http://localhost:3000/auth/callback`
-     - Allowed Logout URLs: `http://localhost:3000/auth/callback`
+     - Allowed Logout URLs: `http://localhost:3000`
 
-2. **Create an API** (Auth0 dashboard → Applications → APIs → Create API):
+2. **Create a database connection** (Auth0 dashboard → Authentication → Database → Create DB
+   Connection):
+   - Name: `Username-Password-Authentication`, otherwise leave the defaults as-is.
+   - Associate it with the Application: open the connection's settings, go to its **Applications
+     tab**, and select `carqna`. Without this, `carqna` has no connection to actually authenticate
+     users against.
+
+3. **Create an API** (Auth0 dashboard → Applications → APIs → Create API):
    - Name: `carqna`
    - Identifier: `https://carqna-agent/api`
    - **Application Access tab**: grant `carqna` (the Application from step 1) access. Easy to miss —
@@ -193,7 +200,7 @@ in, and `carqna-agent` verifies the resulting access token on every request. See
      server "https://carqna-agent/api"` (an `invalid_request` OAuth2Error), even though the
      API/audience itself exists and every env var is already correct.
 
-3. **Add a user** (Auth0 dashboard → User Management → Users → Create User):
+4. **Add a user** (Auth0 dashboard → User Management → Users → Create User):
    - Settings tab: email, name, etc.
    - Authorized Applications tab: add `carqna` as an authorized application for this user.
 
@@ -236,7 +243,9 @@ npm run dev
 ```
 
 #### Access the user interface
-http://localhost:3000
+Using a browser, open URL - http://localhost:3000 . Login using OKTA assigned user/password, if prompted. 
+
+To logout, open URL - http://localhost:3000/auth/logout
 
 ### Running CarQnA using cli
 
@@ -286,9 +295,9 @@ Useful query — list a given user's threads:
 SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE 'auth0|6a78d5504c69cc8f16465b81:%';
 ```
 
-#### `users`
+#### `user_registry`
 
-Created by `infrastructure/docker/postgres/initdb.d/users_table.sh` (not by application code — see
+Created by `infrastructure/docker/postgres/initdb.d/users_registry.sh` (not by application code — see
 `.plans/005-2026-08-10-user-tracking-plan-DONE.md`). Maps the same opaque `auth0|...` id used in
 `checkpoints.thread_id` to a human identity, fetched from Auth0's `/userinfo` endpoint the first time
 each user is ever seen:
