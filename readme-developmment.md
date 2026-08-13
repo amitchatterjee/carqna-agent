@@ -69,7 +69,7 @@ docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
 ```
 Brings up `opensearch` and `postgres` (checkpointer storage for multi-turn conversation state).
 Postgres needs no manual bootstrap — `infrastructure/docker/postgres/initdb.d/init_user.sh` creates
-the `convmem` user/database automatically on first start.
+the `carqna` user/database automatically on first start.
 
 ### One-time setup of Opensearch
 
@@ -261,7 +261,7 @@ cd ~/git/carqna-agent
 python -m agent.carqna_cli --session <name>
 ```
 `--session` is mandatory. If a session with that name already exists, the CLI continues it; otherwise
-it creates a new one. Unlike the web UI (which uses the shared `convmem` Postgres database), the CLI
+it creates a new one. Unlike the web UI (which uses the shared `carqna` Postgres database), the CLI
 stores everything locally in `~/.carqna/carqna_cli.sqlite` (override with `CARQNA_CLI_SQLITE_PATH`) —
 no Postgres involved, and no collision risk between different people running the CLI against the same
 shared Postgres instance, since there's no shared resource at all. See
@@ -273,9 +273,9 @@ shared Postgres instance, since there's no shared resource at all. See
 curl https://api.anthropic.com/v1/models   -H "x-api-key: $ANTHROPIC_API_KEY"   -H "anthropic-version: 2023-06-01" | jq .
 ```
 
-### Access the `convmem` Postgres database
+### Access the `carqna` Postgres database
 ```bash
-PGPASSWORD=convmem psql -h localhost -U convmem -d convmem
+PGPASSWORD=carqna psql -h localhost -U carqna -d carqna
 ```
 List tables from inside `psql` with `\dt`.
 

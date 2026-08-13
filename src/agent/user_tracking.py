@@ -13,7 +13,7 @@ every access token, which is what makes `/userinfo` work here.
 
 The `user_registry` table's DDL lives in
 infrastructure/docker/postgres/initdb.d/users_registry.sh (same convention as
-the convmem database/role itself in init_user.sh), not here -- this module
+the carqna database/role itself in init_user.sh), not here -- this module
 trusts the table already exists rather than creating it at runtime.
 """
 

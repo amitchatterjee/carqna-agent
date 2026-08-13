@@ -95,10 +95,10 @@ def _get_checkpointer_conn_string() -> str:
     Returns:
         Connection string for AsyncPostgresSaver.from_conn_string()
         Reads from CHECKPOINT_POSTGRES_URI environment variable.
-        Defaults to the local `convmem` database (see
+        Defaults to the local `carqna` database (see
         infrastructure/docker/postgres/initdb.d/init_user.sh) if not set.
     """
-    default_uri = "postgresql://convmem:convmem@localhost:5432/convmem"
+    default_uri = "postgresql://carqna:carqna@localhost:5432/carqna"
     conn_string = os.getenv("CHECKPOINT_POSTGRES_URI", default_uri)
     logger.info(f"Using checkpoint database at: {conn_string.split('@')[-1]}")
     return conn_string

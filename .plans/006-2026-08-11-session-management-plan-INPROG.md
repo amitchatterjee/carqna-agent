@@ -45,7 +45,7 @@ below should not make those hard to add later, but nothing here builds them.
 
 Following `005`'s precedent — DDL lives in `infrastructure/docker/postgres/initdb.d/`, not runtime
 Python (a new script sorting after `users_registry.sh`, e.g. `user_sessions.sh`), connecting as
-`convmem` so the table is convmem-owned (same fix `005` needed after getting bitten by connecting as
+`carqna` so the table is carqna-owned (same fix `005` needed after getting bitten by connecting as
 the `postgres` superuser instead).
 
 ```sql

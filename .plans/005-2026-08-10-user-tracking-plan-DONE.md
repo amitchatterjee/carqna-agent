@@ -30,8 +30,8 @@ baking in an Auth0-specific Action.
 
 ## Design
 
-**Table `user_registry`, in the same `convmem` Postgres database** (no new database/role needed — the
-`convmem` user already has schema-create privileges, per `002`'s fix):
+**Table `user_registry`, in the same `carqna` Postgres database** (no new database/role needed — the
+`carqna` user already has schema-create privileges, per `002`'s fix):
 
 ```sql
 CREATE TABLE IF NOT EXISTS user_registry (
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS user_registry (
 originally.)
 
 DDL lives in `infrastructure/docker/postgres/initdb.d/users_registry.sh` (see "Revisions" — moved
-there from runtime code), connecting as `convmem` itself so the table is convmem-owned, same as the
+there from runtime code), connecting as `carqna` itself so the table is carqna-owned, same as the
 checkpoint tables.
 
 **`src/agent/user_tracking.py`**:
@@ -91,12 +91,12 @@ owner directly, then double-checked here for consistency across code/docs:
    design had `user_tracking.py` create the table itself at every startup (`ensure_users_table(pool)`,
    mirroring `checkpointer.setup()`'s idempotent-migration convention). Moved instead to
    `infrastructure/docker/postgres/initdb.d/users_registry.sh`, matching `init_user.sh`'s convention
-   for the `convmem` role/database itself — infrastructure setup belongs in Postgres init scripts, not
-   application code. Named to sort alphabetically after `init_user.sh` so `convmem` exists first, and
-   connects as `convmem` (not `$POSTGRES_USER`) so the table ends up convmem-owned — an earlier draft
+   for the `carqna` role/database itself — infrastructure setup belongs in Postgres init scripts, not
+   application code. Named to sort alphabetically after `init_user.sh` so `carqna` exists first, and
+   connects as `carqna` (not `$POSTGRES_USER`) so the table ends up carqna-owned — an earlier draft
    of this script connected as the `postgres` superuser, which created the table owned by `postgres`
    and caused `permission denied for table users` for both the app itself and manual `psql` queries;
-   fixed by connecting as `convmem` directly. Caveat: `docker-entrypoint-initdb.d` scripts only run
+   fixed by connecting as `carqna` directly. Caveat: `docker-entrypoint-initdb.d` scripts only run
    once, on a **fresh** Postgres volume — doesn't retroactively run against an already-initialized
    container/volume.
 2. **Table renamed `users` → `user_registry`** — to make room for a conceptually distinct future
@@ -140,5 +140,5 @@ upserted a row (`user_id='auth0|6a78d5504c69cc8f16465b81'`, `email='amit.chatter
 verifications). Spot-check command:
 
 ```bash
-PGPASSWORD=convmem psql -h localhost -U convmem -d convmem -c "SELECT user_id, email, name, first_seen_at, last_seen_at FROM user_registry;"
+PGPASSWORD=carqna psql -h localhost -U carqna -d carqna -c "SELECT user_id, email, name, first_seen_at, last_seen_at FROM user_registry;"
 ```
