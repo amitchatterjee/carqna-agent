@@ -1,6 +1,7 @@
 # Track which real users have which sessions (user_registry table, backend groundwork)
 
-Status: **DONE** — implemented and verified 2026-08-10, revised 2026-08-11 (see "Revisions" below).
+Status: **DONE** — implemented and verified 2026-08-10, revised 2026-08-11 and 2026-08-13 (see
+"Revisions" below).
 
 ## Context
 
@@ -34,13 +35,16 @@ baking in an Auth0-specific Action.
 
 ```sql
 CREATE TABLE IF NOT EXISTS user_registry (
-    user_id TEXT PRIMARY KEY,        -- JWT `sub` claim, matches the checkpoint key's prefix
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,     -- JWT `sub` claim, matches the checkpoint key's prefix
     email TEXT,
     name TEXT,
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+(See "Revisions (2026-08-13)" below — `id` is a later addition; `user_id` was the primary key
+originally.)
 
 DDL lives in `infrastructure/docker/postgres/initdb.d/users_registry.sh` (see "Revisions" — moved
 there from runtime code), connecting as `convmem` itself so the table is convmem-owned, same as the
@@ -98,6 +102,30 @@ owner directly, then double-checked here for consistency across code/docs:
 2. **Table renamed `users` → `user_registry`** — to make room for a conceptually distinct future
    table (an actual per-event activity log, out of scope here, see above) without the two names
    colliding/confusing. Same schema, same semantics, verified working end-to-end after the rename.
+
+## Revisions (2026-08-13)
+
+Raised directly while designing `006`'s `user_sessions` table: its foreign key back to
+`user_registry` was originally going to reference the TEXT `user_id` column (the Auth0 `sub`) — not
+liked, on the grounds that every Postgres table in this project should carry its own auto-increment
+surrogate `id`, with foreign keys pointing at that instead of a business-meaningful text column.
+Applied uniformly: **`user_registry` gets a new `id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY`
+column; `user_id` is demoted from primary key to a plain `UNIQUE NOT NULL` column** (see schema
+above). Confirmed no other consequences:
+- `src/agent/user_tracking.py` needed **zero code changes** — its queries (`UPDATE ... WHERE user_id
+  = %s`, `INSERT ... ON CONFLICT (user_id) DO UPDATE`) target `user_id` by value, not by its role as
+  primary key; Postgres's `ON CONFLICT` works against any unique constraint, not only the PK.
+- The LangGraph checkpoint key (`{user_id}:{session_id}` from `004`) is **unaffected** — it's built
+  directly from the verified JWT `sub` claim (`verify_token`'s return value), never from a
+  `user_registry` lookup, so it has no dependency on which column is the physical primary key.
+- No live data existed yet, so this was a direct schema edit (`initdb.d/users_registry.sh`), not a
+  migration.
+
+See `006-2026-08-11-session-management-plan-INPROG.md`'s `user_sessions` design for how the FK is
+actually used (`user_registry_id BIGINT REFERENCES user_registry(id)`, resolved internally from the
+TEXT `user_id` via a join/subquery in `sessions.py` rather than threading a resolved surrogate id
+through `track_user`'s return value — keeps `track_user`'s existing "must never break the chat path"
+contract untouched).
 
 ## Verification
 

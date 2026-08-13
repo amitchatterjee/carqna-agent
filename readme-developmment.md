@@ -10,6 +10,12 @@ python3.13 -m venv ~/carqna.venv
 source ~/carqna.venv/bin/activate
 ```
 
+### Install sqlite3
+This is needed if you want to examine the content of the sqlite3 databases that is used by the carqna_cli
+```bash
+sudo dnf install sqlite
+```
+
 ### Install npm
 ```bash
 sudo dnf install nodejs
@@ -252,8 +258,14 @@ To logout, open URL - http://localhost:3000/auth/logout
 #### Agent
 ```bash
 cd ~/git/carqna-agent
-python -m agent.carqna_cli
+python -m agent.carqna_cli --session <name>
 ```
+`--session` is mandatory. If a session with that name already exists, the CLI continues it; otherwise
+it creates a new one. Unlike the web UI (which uses the shared `convmem` Postgres database), the CLI
+stores everything locally in `~/.carqna/carqna_cli.sqlite` (override with `CARQNA_CLI_SQLITE_PATH`) —
+no Postgres involved, and no collision risk between different people running the CLI against the same
+shared Postgres instance, since there's no shared resource at all. See
+`.plans/006-2026-08-11-session-management-plan-INPROG.md` for the full design.
 
 ## Miscellaneous utilities
 ### List anthropic models
@@ -304,7 +316,8 @@ each user is ever seen:
 
 | Column           | Meaning                                                              |
 |------------------|-----------------------------------------------------------------------|
-| `user_id`        | JWT `sub` claim (primary key) — matches the prefix in `checkpoints.thread_id` |
+| `id`             | Auto-increment surrogate primary key — what other tables' foreign keys reference (e.g. `user_sessions.user_registry_id`), not `user_id` |
+| `user_id`        | JWT `sub` claim (unique, not the primary key) — matches the prefix in `checkpoints.thread_id` |
 | `email`          | From Auth0's `/userinfo`                                              |
 | `name`           | From Auth0's `/userinfo` (falls back to the email string if no separate display name is set) |
 | `first_seen_at`  | First authenticated request from this user                            |
@@ -312,3 +325,38 @@ each user is ever seen:
 
 This is groundwork for the still-deferred multi-session picker feature (listing/switching between a
 user's own named conversations, like Claude Code) — not itself surfaced in the UI yet.
+
+### Access the CLI's local SQLite database
+
+`carqna_cli.py` doesn't use Postgres at all — it's entirely local (see
+`.plans/006-2026-08-11-session-management-plan-INPROG.md`). The `sqlite3` CLI (see "Install sqlite3"
+above) is the direct equivalent of `psql` for this:
+
+```bash
+sqlite3 ~/.carqna/carqna_cli.sqlite
+```
+
+List tables from inside the shell with `.tables`, or run one-shot queries without entering it:
+```bash
+sqlite3 ~/.carqna/carqna_cli.sqlite "SELECT * FROM sessions;"
+```
+
+#### `checkpoints`, `writes`
+
+LangGraph's own tables (`AsyncSqliteSaver` — same conceptual schema as the Postgres path's
+`checkpoints`/`checkpoint_writes`, just fewer of them and SQLite-native types; created automatically on
+first read/write, no explicit setup call needed unlike Postgres). `thread_id` here is just the local
+session's `session_id` as a string (e.g. `"1"`) — no user namespacing, since the file itself is already
+scoped to one person's machine.
+
+#### `sessions`
+
+Created on the fly by `carqna_cli.py` itself (not via an infra init script — see the CLI section of
+`.plans/006-...-INPROG.md` for why this is a deliberate difference from the Postgres-backed
+`user_sessions` table):
+
+| Column         | Meaning                                                        |
+|----------------|-------------------------------------------------------------------|
+| `session_id`   | Autoincrement primary key — matches `checkpoints.thread_id`       |
+| `session_name` | The `--session` value passed on the command line (unique)         |
+| `created_at`   | When this session was first created                               |
