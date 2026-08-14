@@ -1,9 +1,41 @@
 # Multi-session picker (user_sessions table, backend endpoints, UI header panel)
 
-Status: **INPROG** — this is the feature `004` and `005` both explicitly deferred ("multiple named
-sessions per user, like Claude Code"). **CLI portion implemented and verified 2026-08-12** (see "CLI"
-under Design, and Verification items 6-8); the web/backend portions (`user_sessions` table, `/sessions`
-endpoints, header panel + dropdown) are still not started, gated on explicit go-ahead.
+Status: **DONE** — closed out 2026-08-13. This is the feature `004` and `005` both explicitly
+deferred ("multiple named sessions per user, like Claude Code"). **CLI portion implemented and
+verified 2026-08-12** (see "CLI" under Design, and Verification items 6-8). **Web/backend portion
+implemented and live-verified 2026-08-13** (`user_sessions` table, `/sessions` endpoints,
+`sessions.py`, header panel + dropdown, `ChatApp.tsx`/`SessionHeader.tsx` on the frontend) — session
+isolation confirmed via a plant-a-fact-in-A/check-not-visible-in-B/switch-back-and-recall test through
+the real UI, cross-checked directly against `checkpoints`/`user_sessions` in Postgres (see
+Verification).
+
+**Known gap at close, left open by explicit choice**: three Verification items below (1, 2, 4a — the
+`GET /sessions` 401-with-no-token check, cross-*user* isolation on `/sessions` specifically, and
+`access_ts` touch-scoping re-verified on the *web* path) were not explicitly re-confirmed
+post-implementation before closing this out — all reuse patterns already proven correct elsewhere
+(`verify_token`, `WHERE ... AND user_id = %s` scoping), but none were independently exercised here.
+Project owner's call to close now and check these later rather than block on them — flagged, not
+forgotten.
+
+**Real bugs found live-testing 2026-08-13, both fixed same day**:
+1. `POST /sessions` failed with `create_session found no user_registry row for user_id=...` for a
+   real user. Root cause: `track_user` (which upserts `user_registry`) was only wired into the chat
+   route (`POST /`), not the `/sessions` routes — but a user's very first authenticated action can be
+   opening the session dropdown or clicking "+" *before* ever sending a chat message, so `/sessions`
+   can't assume the chat route already ran. Fixed by calling `track_user(user_pool, user_id,
+   get_bearer_token(request))` at the top of both `GET /sessions` and `POST /sessions` too (same call,
+   same resilience — never blocks the request), mirroring the chat route exactly.
+2. **On initial page load, the dropdown visually showed the first session selected, but the chat
+   panel rendered the "no session" placeholder instead of the actual chat** — a React `<select>`
+   footgun. `ChatApp.tsx`'s `activeSessionId` started `null` and was never auto-set when the fetched
+   session list was non-empty, but `SessionHeader`'s `<select value={activeSessionId ?? ""}>` has no
+   `""` option — when a controlled `<select>`'s value doesn't match any `<option>`, the *browser*
+   falls back to visually highlighting the first option regardless of what React's state actually is.
+   Picking a different session (or switching back) then worked fine, because that's exactly when
+   `activeSessionId` first became a real, matching value. Fixed in `refreshSessions()`: auto-select
+   `data[0]?.id` (the most-recently-used session, since the backend already orders by `access_ts
+   DESC`) whenever nothing is active yet, so the dropdown's initial render and React's state agree
+   from the start.
 
 **CLI verification results (2026-08-12)**: `langgraph-checkpoint-sqlite` added to `pyproject.toml`;
 `carqna_cli.py` rewritten per the design below. Confirmed live: `--session test-session` created
@@ -44,9 +76,10 @@ below should not make those hard to add later, but nothing here builds them.
 ### Data model: new `user_sessions` table
 
 Following `005`'s precedent — DDL lives in `infrastructure/docker/postgres/initdb.d/`, not runtime
-Python (a new script sorting after `users_registry.sh`, e.g. `user_sessions.sh`), connecting as
-`carqna` so the table is carqna-owned (same fix `005` needed after getting bitten by connecting as
-the `postgres` superuser instead).
+Python (`users_sessions.sh` — named that way, not `user_sessions.sh`, specifically because ASCII `_`
+sorts before `s`, so `user_sessions.sh` would incorrectly sort *before* `users_registry.sh` and run
+before the table its FK depends on exists), connecting as `carqna` so the table is carqna-owned (same
+fix `005` needed after getting bitten by connecting as the `postgres` superuser instead).
 
 ```sql
 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -185,6 +218,11 @@ Reuses the existing `user_pool` (already opened in `lifespan()` for `user_regist
 
 - `GET /sessions` — list the caller's sessions.
 - `POST /sessions` — create a session; body `{"session_name": str}`; returns the created row.
+- **Both `/sessions` routes also call `track_user(user_pool, user_id, get_bearer_token(request))`
+  first**, same as the chat route — a user's first authenticated action can be opening the dropdown
+  or clicking "+" before ever sending a message, so `create_session`'s `user_registry` join can't
+  assume the chat route already upserted that row. Found the hard way (real `POST /sessions` failure
+  from a genuinely new user, fixed same day — see the note at the top of this doc).
 - Existing `POST /` (the AG-UI chat route) additionally calls `sessions.touch_session(user_pool,
   user_id, session_id)` — same spot as the existing `track_user(...)` call, right after `verify_token`
   resolves `user_id` and the `session_id` is parsed out of the (now-composite) `thread_id`. Keeps
@@ -293,22 +331,31 @@ CLI and web are allowed to be fully separate systems here (no unified cross-surf
 (Last-used/most-recent-activity tracking — previously listed here as deferred — is now in scope via
 `access_ts`; see Data model and "Backend: new module `src/agent/sessions.py`" above.)
 
-## Verification (once implemented)
+## Verification
 
-1. `GET /sessions` with no token → `401` (same pattern as the existing `POST /` route).
+1. `GET /sessions` with no token → `401` (same pattern as the existing `POST /` route). *Not yet
+   explicitly re-verified after implementation — inherited from `verify_token`'s existing behavior,
+   same dependency used everywhere else.*
 2. `POST /sessions` creates a row scoped to the caller's `user_id`; a different user's token can never
-   see or create sessions under someone else's `user_id`.
-3. Selecting a session in the UI dropdown and sending a message correctly continues that session's
-   real conversation (the model has full prior context) — confirmed via `checkpoints` state, not via
-   the chat UI re-displaying old bubbles (deferred, see above).
-4. `checkpoints.thread_id` for a new message shows `{user_id}:{session_id}` (integer, not a UUID) for
-   sessions created under this new scheme.
+   see or create sessions under someone else's `user_id`. *Not yet explicitly tested with a second
+   user — only one real account has been used for testing so far.*
+3. **Confirmed 2026-08-13, live, through the real UI**: plant a fact in session A ("My favorite car
+   is a Tesla Model 3"), confirm session B doesn't know it, switch back to session A and confirm it's
+   correctly recalled — proves `threadId` switching actually reaches the backend and resumes the
+   right LangGraph state, not just a fresh/empty run each time.
+4. **Confirmed 2026-08-13, live**: `checkpoints.thread_id` for new messages shows
+   `{user_id}:{session_id}` (integer, not a UUID) — verified directly via `psql`, cross-referenced
+   against `user_sessions.id` and `user_registry.id`/`user_id` (see the worked example from this
+   session: `user_registry.id=1` ↔ `user_sessions.id∈{1,2}` ↔ `checkpoints.thread_id∈{'...:1','...:2'}`).
 4a. Sending a message in session A updates only session A's `user_sessions.access_ts` — session B's
-    and every other user's sessions stay untouched. (Same check as CLI item 6 below, applied to the
-    Postgres path — verify the `WHERE session_id = %s AND user_id = %s` scoping actually works,
-    given the CLI's equivalent bug wasn't caught until directly asked to look for it.)
+    and every other user's sessions stay untouched. *Not yet explicitly re-verified against the live
+    Postgres path after implementation* (the analogous CLI bug in this exact check, item 6 below, was
+    real and only caught when directly asked to look for it — worth actually running this check, not
+    assuming it's fine because the code looks right).
 5. A brand-new user with zero sessions sees only the "+" button, no dropdown options, until they
-   create their first session.
+   create their first session. **Confirmed 2026-08-13**, with a related bug found and fixed on the
+   *returning*-user case (sessions already exist but none marked active on page load) — see the
+   dropdown/`<select>` desync bug noted above.
 6. CLI: `python -m agent.carqna_cli --session foo` twice in a row continues the same conversation
    (second run picks up prior context, confirmed via the local SQLite file's `checkpoints` table);
    `--session bar` starts a distinct one, with its own row in the local `sessions` table.

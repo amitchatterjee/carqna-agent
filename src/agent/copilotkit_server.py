@@ -5,13 +5,16 @@ import langsmith
 from ag_ui.core.types import RunAgentInput
 from ag_ui.encoder import EventEncoder
 from copilotkit import LangGraphAGUIAgent
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from psycopg.errors import UniqueViolation
 from psycopg_pool import AsyncConnectionPool
+from pydantic import BaseModel
 
 from agent.auth import get_bearer_token, verify_token
+from agent.sessions import create_session, list_sessions, touch_session
 from agent.user_tracking import track_user
 
 logger = logging.getLogger(__name__)
@@ -20,6 +23,10 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+
+class CreateSessionRequest(BaseModel):
+    session_name: str
 
 
 @asynccontextmanager
@@ -75,6 +82,25 @@ async def lifespan(app: FastAPI):
                 # chat request (see user_tracking.track_user's own try/except).
                 await track_user(user_pool, user_id, get_bearer_token(request))
 
+                # The frontend sends the active session's user_sessions.id (see
+                # .plans/006-2026-08-11-session-management-plan-INPROG.md) as
+                # the AG-UI thread_id -- parse it now, while it's still the
+                # plain session id, before rewriting it into the composite key
+                # below.
+                try:
+                    session_id = int(input_data.thread_id)
+                except (TypeError, ValueError) as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="thread_id must be a valid session id",
+                    ) from e
+
+                # "Last accessed" nicety, not a hard dependency of the chat
+                # path -- never blocks/fails the actual request (see
+                # sessions.touch_session's own try/except, same resilience
+                # pattern as track_user above).
+                await touch_session(user_pool, user_id, session_id)
+
                 # Never trust a client-supplied user id -- the composite key is
                 # built from the verified token's `sub` claim only.
                 input_data.thread_id = f"{user_id}:{input_data.thread_id}"
@@ -91,6 +117,50 @@ async def lifespan(app: FastAPI):
                 return StreamingResponse(
                     event_generator(), media_type=encoder.get_content_type()
                 )
+
+            @app.get("/sessions")
+            async def list_sessions_endpoint(
+                request: Request,
+                user_id: str = Depends(verify_token),
+            ):
+                """List the caller's own sessions, most-recently-accessed first."""
+                # Same call as the chat route (see below) -- a user's very
+                # first authenticated action might be opening the session
+                # dropdown before ever sending a chat message, so this can't
+                # rely on the chat route having already upserted their
+                # user_registry row. Never blocks/fails the request (see
+                # track_user's own try/except).
+                await track_user(user_pool, user_id, get_bearer_token(request))
+                return await list_sessions(user_pool, user_id)
+
+            @app.post("/sessions")
+            async def create_session_endpoint(
+                body: CreateSessionRequest,
+                request: Request,
+                user_id: str = Depends(verify_token),
+            ):
+                """Create a new session for the caller."""
+                # Same reasoning as list_sessions_endpoint above -- clicking
+                # "+" can be the very first authenticated action a user takes.
+                await track_user(user_pool, user_id, get_bearer_token(request))
+                try:
+                    session = await create_session(user_pool, user_id, body.session_name)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+                except UniqueViolation as e:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="A session with that name already exists",
+                    ) from e
+                if session is None:
+                    # Shouldn't happen -- track_user already upserts the caller's
+                    # user_registry row earlier in every authenticated request.
+                    logger.error(
+                        "create_session found no user_registry row for user_id=%s",
+                        user_id,
+                    )
+                    raise HTTPException(status_code=500, detail="Failed to create session")
+                return session
 
             @app.get("/health")
             def health():
