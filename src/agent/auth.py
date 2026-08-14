@@ -11,7 +11,7 @@ Env vars (see .env.example): AUTH0_DOMAIN, AUTH0_AUDIENCE.
 
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 
 import jwt
 from dotenv import load_dotenv
@@ -44,9 +44,10 @@ def _get_jwks_client() -> PyJWKClient:
 def get_bearer_token(request: Request) -> str:
     """Extract and validate the `Authorization: Bearer <token>` header.
 
-    Shared by `verify_token` (which also verifies the token) and callers that
-    just need the raw token to pass along elsewhere (e.g. user_tracking.py's
-    `/userinfo` call) without re-verifying it themselves.
+    Called by `AuthMiddleware` (see `auth_middleware.py`) before it verifies
+    the token via `authenticate_request`, and by callers that just need the
+    raw token to pass along elsewhere (e.g. `user_tracking.py`'s `/userinfo`
+    call) without re-verifying it themselves.
     """
     auth_header = request.headers.get("authorization")
     if not auth_header or not auth_header.lower().startswith("bearer "):
@@ -56,15 +57,15 @@ def get_bearer_token(request: Request) -> str:
     return auth_header.split(" ", 1)[1].strip()
 
 
-async def verify_token(request: Request) -> str:
-    """FastAPI dependency: verify the incoming Bearer token.
+def authenticate_request(token: str) -> dict[str, Any]:
+    """Verify a raw bearer token and return its decoded claims.
 
-    Returns the verified user id (the token's `sub` claim). Raises
-    HTTPException(401) if the header is missing/malformed or the token fails
-    signature, issuer, audience, or expiry validation.
+    Called once per request by `AuthMiddleware` (see `auth_middleware.py`) --
+    not a FastAPI dependency itself, since centralizing auth in middleware
+    means no route needs to declare a per-route `Depends` for this anymore.
+    Raises HTTPException(401) if the token fails signature, issuer, audience,
+    or expiry validation, or is missing its `sub` claim.
     """
-    token = get_bearer_token(request)
-
     domain = os.getenv("AUTH0_DOMAIN")
     audience = os.getenv("AUTH0_AUDIENCE")
     if not domain or not audience:
@@ -83,8 +84,7 @@ async def verify_token(request: Request) -> str:
         logger.warning(f"Token verification failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid token") from e
 
-    user_id = claims.get("sub")
-    if not user_id:
+    if not claims.get("sub"):
         raise HTTPException(status_code=401, detail="Token missing 'sub' claim")
 
-    return user_id
+    return claims

@@ -22,6 +22,12 @@ becomes a concern.
   entire process lifetime across every user and every request. Worth investigating whether
   `langgraph-checkpoint-postgres` supports being handed a pool instead of a single connection, or
   whether this becomes an actual bottleneck under concurrent load before making any change.
+- **Make `user_pool`'s sizing configurable via env vars** — raised 2026-08-14 alongside the JWT-auth
+  centralization work. `min_size`/`max_size`/`timeout`/`max_idle`/`max_lifetime` are all real
+  `AsyncConnectionPool` constructor args but none are currently exposed; add env vars (e.g.
+  `USER_POOL_MIN_SIZE`, `USER_POOL_MAX_SIZE`, `USER_POOL_TIMEOUT`) with today's implicit defaults kept
+  as the fallback, so pool sizing can be tuned per-environment without a code change. Natural to pick
+  up together with the checkpointer-pooling investigation above once real traffic patterns are known.
 
 ## Test coverage
 

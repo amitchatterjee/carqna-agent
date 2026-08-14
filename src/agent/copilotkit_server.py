@@ -5,7 +5,7 @@ import langsmith
 from ag_ui.core.types import RunAgentInput
 from ag_ui.encoder import EventEncoder
 from copilotkit import LangGraphAGUIAgent
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -13,7 +13,8 @@ from psycopg.errors import UniqueViolation
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
-from agent.auth import get_bearer_token, verify_token
+from agent.auth_context import get_current_access_token, get_current_user_id
+from agent.auth_middleware import AuthMiddleware
 from agent.sessions import create_session, list_sessions, touch_session
 from agent.user_tracking import track_user
 
@@ -63,16 +64,17 @@ async def lifespan(app: FastAPI):
             # Hand-rolled equivalent of ag_ui_langgraph's add_langgraph_fastapi_endpoint
             # (ag_ui_langgraph/endpoint.py) -- that helper has no hook for auth or for
             # rewriting thread_id, so this mirrors its implementation with two
-            # insertions: the verify_token dependency, and namespacing thread_id by the
-            # verified user so one user can never read/continue another's conversation
-            # (see .plans/004-2026-08-09-oauth2-okta-auth-plan-DONE.md's "Ownership
-            # is enforced structurally" note).
+            # insertions: auth (enforced by AuthMiddleware app-wide, identity read via
+            # get_current_user_id()), and namespacing thread_id by the verified user so
+            # one user can never read/continue another's conversation (see
+            # .plans/004-2026-08-09-oauth2-okta-auth-plan-DONE.md's "Ownership is
+            # enforced structurally" note).
             @app.post("/")
             async def langgraph_agent_endpoint(
                 input_data: RunAgentInput,
                 request: Request,
-                user_id: str = Depends(verify_token),
             ):
+                user_id = get_current_user_id()
                 accept_header = request.headers.get("accept")
                 encoder = EventEncoder(accept=accept_header)
 
@@ -80,7 +82,7 @@ async def lifespan(app: FastAPI):
                 # maps the opaque user_id to a human identity (email/name) in a
                 # separate `user_registry` table. Never blocks/fails the actual
                 # chat request (see user_tracking.track_user's own try/except).
-                await track_user(user_pool, user_id, get_bearer_token(request))
+                await track_user(user_pool, user_id, get_current_access_token())
 
                 # The frontend sends the active session's user_sessions.id (see
                 # .plans/006-2026-08-11-session-management-plan-DONE.md) as
@@ -119,30 +121,25 @@ async def lifespan(app: FastAPI):
                 )
 
             @app.get("/sessions")
-            async def list_sessions_endpoint(
-                request: Request,
-                user_id: str = Depends(verify_token),
-            ):
+            async def list_sessions_endpoint():
                 """List the caller's own sessions, most-recently-accessed first."""
+                user_id = get_current_user_id()
                 # Same call as the chat route (see below) -- a user's very
                 # first authenticated action might be opening the session
                 # dropdown before ever sending a chat message, so this can't
                 # rely on the chat route having already upserted their
                 # user_registry row. Never blocks/fails the request (see
                 # track_user's own try/except).
-                await track_user(user_pool, user_id, get_bearer_token(request))
+                await track_user(user_pool, user_id, get_current_access_token())
                 return await list_sessions(user_pool, user_id)
 
             @app.post("/sessions")
-            async def create_session_endpoint(
-                body: CreateSessionRequest,
-                request: Request,
-                user_id: str = Depends(verify_token),
-            ):
+            async def create_session_endpoint(body: CreateSessionRequest):
                 """Create a new session for the caller."""
+                user_id = get_current_user_id()
                 # Same reasoning as list_sessions_endpoint above -- clicking
                 # "+" can be the very first authenticated action a user takes.
-                await track_user(user_pool, user_id, get_bearer_token(request))
+                await track_user(user_pool, user_id, get_current_access_token())
                 try:
                     session = await create_session(user_pool, user_id, body.session_name)
                 except ValueError as e:
@@ -174,6 +171,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+# Central auth interceptor (see auth_middleware.py) -- verifies the bearer
+# token on every request except its explicit unauthenticated-path allowlist,
+# and populates auth_context for get_current_user_id()/get_current_access_token()
+# to read downstream. Must be added before FastAPIInstrumentor.instrument_app
+# below, same ordering constraint as that call itself (see its comment).
+app.add_middleware(AuthMiddleware)
 # Must happen here, before uvicorn sends this app *any* ASGI scope --
 # including the lifespan scope itself. Starlette builds and caches its
 # middleware stack on the very first __call__ regardless of scope type
