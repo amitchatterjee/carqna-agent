@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
                 await track_user(user_pool, user_id, get_bearer_token(request))
 
                 # The frontend sends the active session's user_sessions.id (see
-                # .plans/006-2026-08-11-session-management-plan-INPROG.md) as
+                # .plans/006-2026-08-11-session-management-plan-DONE.md) as
                 # the AG-UI thread_id -- parse it now, while it's still the
                 # plain session id, before rewriting it into the composite key
                 # below.

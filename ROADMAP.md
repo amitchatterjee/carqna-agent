@@ -63,9 +63,9 @@ From `005-2026-08-10-user-tracking-plan-DONE.md`'s "Explicitly out of scope":
 
 ## Session management follow-ons
 
-From `006-2026-08-11-session-management-plan-INPROG.md`'s "Explicitly deferred" (web/backend portion
-of `006` itself is still not implemented — see that plan for current status; these are the pieces
-deferred even once it is):
+From `006-2026-08-11-session-management-plan-DONE.md`'s "Explicitly deferred" — `006` itself
+(including the web/backend portion) is now fully implemented and closed out; these three pieces were
+deliberately left out of it and remain unbuilt:
 - **Session rename.**
 - **Session delete.**
 - **Restoring visual chat history when switching to an existing session** — today, switching sessions

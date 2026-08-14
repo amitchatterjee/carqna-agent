@@ -25,7 +25,7 @@ def _get_cli_sqlite_path() -> str:
     """Local SQLite file for the CLI's checkpointer + sessions table.
 
     Deliberately separate from the web path's shared Postgres (see
-    .plans/006-2026-08-11-session-management-plan-INPROG.md) -- this file
+    .plans/006-2026-08-11-session-management-plan-DONE.md) -- this file
     lives in the CLI user's own home directory, so there's no shared resource
     left for concurrent CLI users to collide on.
     """

@@ -1,6 +1,6 @@
 """List/create/touch a user's named conversation sessions (the web half of the
 multi-session picker feature -- see
-.plans/006-2026-08-11-session-management-plan-INPROG.md).
+.plans/006-2026-08-11-session-management-plan-DONE.md).
 
 Deliberately separate from `carqna_cli.py`'s local SQLite `sessions` table --
 that one has no `user_id` at all (the file itself is the isolation boundary);

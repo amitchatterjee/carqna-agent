@@ -121,7 +121,7 @@ above). Confirmed no other consequences:
 - No live data existed yet, so this was a direct schema edit (`initdb.d/users_registry.sh`), not a
   migration.
 
-See `006-2026-08-11-session-management-plan-INPROG.md`'s `user_sessions` design for how the FK is
+See `006-2026-08-11-session-management-plan-DONE.md`'s `user_sessions` design for how the FK is
 actually used (`user_registry_id BIGINT REFERENCES user_registry(id)`, resolved internally from the
 TEXT `user_id` via a join/subquery in `sessions.py` rather than threading a resolved surrogate id
 through `track_user`'s return value — keeps `track_user`'s existing "must never break the chat path"

@@ -265,7 +265,7 @@ it creates a new one. Unlike the web UI (which uses the shared `carqna` Postgres
 stores everything locally in `~/.carqna/carqna_cli.sqlite` (override with `CARQNA_CLI_SQLITE_PATH`) —
 no Postgres involved, and no collision risk between different people running the CLI against the same
 shared Postgres instance, since there's no shared resource at all. See
-`.plans/006-2026-08-11-session-management-plan-INPROG.md` for the full design.
+`.plans/006-2026-08-11-session-management-plan-DONE.md` for the full design.
 
 ## Miscellaneous utilities
 ### List anthropic models
@@ -329,7 +329,7 @@ user's own named conversations, like Claude Code) — not itself surfaced in the
 ### Access the CLI's local SQLite database
 
 `carqna_cli.py` doesn't use Postgres at all — it's entirely local (see
-`.plans/006-2026-08-11-session-management-plan-INPROG.md`). The `sqlite3` CLI (see "Install sqlite3"
+`.plans/006-2026-08-11-session-management-plan-DONE.md`). The `sqlite3` CLI (see "Install sqlite3"
 above) is the direct equivalent of `psql` for this:
 
 ```bash
