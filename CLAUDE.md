@@ -63,14 +63,14 @@ Three different entry points expose the same `create_graph()` agent for differen
   service (`carqna_dapr.py`, since deleted) that guessed at a REST/SSE + CopilotKit
   discovery-protocol shape that turned out not to be how CopilotKit actually integrates — see
   `.plans/001-2026-07-24-copilot-ui-remediation-plan-DONE.md` for that history. Multi-turn state
-  uses a Postgres checkpointer (`AsyncPostgresSaver`, the `convmem` database — see
+  uses a Postgres checkpointer (`AsyncPostgresSaver`, the `carqna` database — see
   `.plans/002-2026-08-02-postgres-checkpointer-plan-DONE.md`), shared with `carqna.py` via
   `graph.py`'s `_get_checkpointer_conn_string()` helper. Postgres requires an explicit
   `await checkpointer.setup()` call (idempotent, run on every startup) that SQLite never needed.
 
 Required env vars (see `.env.example`): `ANTHROPIC_API_KEY`, `MCP_CONFIG_PATH`,
 `INSURANCE_DOCS_ROOT`, `LLM_MODEL` (defaults to `claude-sonnet-4-5-20250929`), `PROMPTS_DIR`
-(defaults to `.`), `CHECKPOINT_POSTGRES_URI` (defaults to the local `convmem` Postgres database).
+(defaults to `.`), `CHECKPOINT_POSTGRES_URI` (defaults to the local `carqna` Postgres database).
 
 Optional: `LANGSMITH_TRACING_V2=true` + `LANGSMITH_TRACING_MODE=hybrid|otel` +
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces`/`OTEL_SERVICE_NAME` route
@@ -129,7 +129,7 @@ Dockerfiles, `dapr-config.yaml`, `nginx.conf`) has been removed, since host-base
 actual flow used to validate this app and the extra containers/proxy added nothing.
 
 - `docker/docker-compose.yml` — three services: `opensearch` (custom image with the MCP plugin,
-  built from `docker/opensearch-mcp/`), `postgres` (checkpointer storage — the `convmem`
+  built from `docker/opensearch-mcp/`), `postgres` (checkpointer storage — the `carqna`
   user/database are created automatically on first start by
   `docker/postgres/initdb.d/init_user.sh`, no manual bootstrap needed, unlike OpenSearch below), and
   `jaeger` (`jaegertracing/all-in-one`, OTLP receiver on `4317`/gRPC and `4318`/HTTP, UI on

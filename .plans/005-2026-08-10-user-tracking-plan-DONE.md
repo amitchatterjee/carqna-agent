@@ -1,6 +1,7 @@
 # Track which real users have which sessions (user_registry table, backend groundwork)
 
-Status: **DONE** — implemented and verified 2026-08-10, revised 2026-08-11 (see "Revisions" below).
+Status: **DONE** — implemented and verified 2026-08-10, revised 2026-08-11 and 2026-08-13 (see
+"Revisions" below).
 
 ## Context
 
@@ -29,21 +30,24 @@ baking in an Auth0-specific Action.
 
 ## Design
 
-**Table `user_registry`, in the same `convmem` Postgres database** (no new database/role needed — the
-`convmem` user already has schema-create privileges, per `002`'s fix):
+**Table `user_registry`, in the same `carqna` Postgres database** (no new database/role needed — the
+`carqna` user already has schema-create privileges, per `002`'s fix):
 
 ```sql
 CREATE TABLE IF NOT EXISTS user_registry (
-    user_id TEXT PRIMARY KEY,        -- JWT `sub` claim, matches the checkpoint key's prefix
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,     -- JWT `sub` claim, matches the checkpoint key's prefix
     email TEXT,
     name TEXT,
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+(See "Revisions (2026-08-13)" below — `id` is a later addition; `user_id` was the primary key
+originally.)
 
 DDL lives in `infrastructure/docker/postgres/initdb.d/users_registry.sh` (see "Revisions" — moved
-there from runtime code), connecting as `convmem` itself so the table is convmem-owned, same as the
+there from runtime code), connecting as `carqna` itself so the table is carqna-owned, same as the
 checkpoint tables.
 
 **`src/agent/user_tracking.py`**:
@@ -87,17 +91,41 @@ owner directly, then double-checked here for consistency across code/docs:
    design had `user_tracking.py` create the table itself at every startup (`ensure_users_table(pool)`,
    mirroring `checkpointer.setup()`'s idempotent-migration convention). Moved instead to
    `infrastructure/docker/postgres/initdb.d/users_registry.sh`, matching `init_user.sh`'s convention
-   for the `convmem` role/database itself — infrastructure setup belongs in Postgres init scripts, not
-   application code. Named to sort alphabetically after `init_user.sh` so `convmem` exists first, and
-   connects as `convmem` (not `$POSTGRES_USER`) so the table ends up convmem-owned — an earlier draft
+   for the `carqna` role/database itself — infrastructure setup belongs in Postgres init scripts, not
+   application code. Named to sort alphabetically after `init_user.sh` so `carqna` exists first, and
+   connects as `carqna` (not `$POSTGRES_USER`) so the table ends up carqna-owned — an earlier draft
    of this script connected as the `postgres` superuser, which created the table owned by `postgres`
    and caused `permission denied for table users` for both the app itself and manual `psql` queries;
-   fixed by connecting as `convmem` directly. Caveat: `docker-entrypoint-initdb.d` scripts only run
+   fixed by connecting as `carqna` directly. Caveat: `docker-entrypoint-initdb.d` scripts only run
    once, on a **fresh** Postgres volume — doesn't retroactively run against an already-initialized
    container/volume.
 2. **Table renamed `users` → `user_registry`** — to make room for a conceptually distinct future
    table (an actual per-event activity log, out of scope here, see above) without the two names
    colliding/confusing. Same schema, same semantics, verified working end-to-end after the rename.
+
+## Revisions (2026-08-13)
+
+Raised directly while designing `006`'s `user_sessions` table: its foreign key back to
+`user_registry` was originally going to reference the TEXT `user_id` column (the Auth0 `sub`) — not
+liked, on the grounds that every Postgres table in this project should carry its own auto-increment
+surrogate `id`, with foreign keys pointing at that instead of a business-meaningful text column.
+Applied uniformly: **`user_registry` gets a new `id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY`
+column; `user_id` is demoted from primary key to a plain `UNIQUE NOT NULL` column** (see schema
+above). Confirmed no other consequences:
+- `src/agent/user_tracking.py` needed **zero code changes** — its queries (`UPDATE ... WHERE user_id
+  = %s`, `INSERT ... ON CONFLICT (user_id) DO UPDATE`) target `user_id` by value, not by its role as
+  primary key; Postgres's `ON CONFLICT` works against any unique constraint, not only the PK.
+- The LangGraph checkpoint key (`{user_id}:{session_id}` from `004`) is **unaffected** — it's built
+  directly from the verified JWT `sub` claim (`verify_token`'s return value), never from a
+  `user_registry` lookup, so it has no dependency on which column is the physical primary key.
+- No live data existed yet, so this was a direct schema edit (`initdb.d/users_registry.sh`), not a
+  migration.
+
+See `006-2026-08-11-session-management-plan-DONE.md`'s `user_sessions` design for how the FK is
+actually used (`user_registry_id BIGINT REFERENCES user_registry(id)`, resolved internally from the
+TEXT `user_id` via a join/subquery in `sessions.py` rather than threading a resolved surrogate id
+through `track_user`'s return value — keeps `track_user`'s existing "must never break the chat path"
+contract untouched).
 
 ## Verification
 
@@ -112,5 +140,5 @@ upserted a row (`user_id='auth0|6a78d5504c69cc8f16465b81'`, `email='amit.chatter
 verifications). Spot-check command:
 
 ```bash
-PGPASSWORD=convmem psql -h localhost -U convmem -d convmem -c "SELECT user_id, email, name, first_seen_at, last_seen_at FROM user_registry;"
+PGPASSWORD=carqna psql -h localhost -U carqna -d carqna -c "SELECT user_id, email, name, first_seen_at, last_seen_at FROM user_registry;"
 ```

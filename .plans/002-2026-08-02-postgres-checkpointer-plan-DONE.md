@@ -5,14 +5,20 @@ Status: **DONE, validated end-to-end 2026-08-06** by the project owner. Verifica
 through the real UI, context survives a backend restart, `carqna.py` CLI runner too) all passed.
 Step 8 (`mypy --strict`) was not run — optional, not a blocker. Not committed yet.
 
+**Renamed 2026-08-13**: the Postgres role/database was originally named `convmem`; the project owner
+renamed both to `carqna` directly against the infrastructure (`init_user.sh`, `.env`,
+`.env.example`, `CLAUDE.md`, `readme-developmment.md`). All references below updated to match —
+`carqna` is the current, correct name throughout; the bug and fix described are unaffected by the
+rename, only the name itself changed.
+
 **One real bug found and fixed along the way**: the first version of
-`infrastructure/docker/postgres/initdb.d/init_user.sh` ran `GRANT ALL ON SCHEMA public TO convmem`
-in the same `psql` session as `CREATE DATABASE convmem`, connected to `$POSTGRES_DB` (defaults to
+`infrastructure/docker/postgres/initdb.d/init_user.sh` ran `GRANT ALL ON SCHEMA public TO carqna`
+in the same `psql` session as `CREATE DATABASE carqna`, connected to `$POSTGRES_DB` (defaults to
 `postgres`) — so the grant landed on the wrong database's `public` schema. PG15+ no longer grants
 `CREATE` on `public` to `PUBLIC` by default (a real behavior change from PG14), and that revocation
 is per-database, so `checkpointer.setup()`'s first `CREATE TABLE` failed with
 `psycopg.errors.InsufficientPrivilege`. Fixed by giving the schema grant its own `psql` session
-connected directly to `--dbname convmem`. Required dropping and recreating the `postgres-data`
+connected directly to `--dbname carqna`. Required dropping and recreating the `postgres-data`
 Docker volume, since `initdb.d/` scripts only run once, on a fresh volume.
 
 ## Context
@@ -20,7 +26,7 @@ Docker volume, since `initdb.d/` scripts only run once, on a fresh volume.
 Multi-turn conversation state is currently persisted via `AsyncSqliteSaver` (a local `.db.sqlite3`
 file), instantiated independently in both `src/agent/copilotkit_server.py` (the production entrypoint)
 and `src/agent/carqna.py` (the local CLI runner). A `postgres` service was added to
-`infrastructure/docker/docker-compose.yml` with a dedicated `convmem` user/database (created
+`infrastructure/docker/docker-compose.yml` with a dedicated `carqna` user/database (created
 automatically via `infrastructure/docker/postgres/initdb.d/init_user.sh` on first container start),
 exposed on `localhost:5432`. This plan wires the code up to use it instead.
 
@@ -44,7 +50,7 @@ consistent backend everywhere.
 - **`src/agent/graph.py`**: replace `_get_checkpointer_conn_string()` (currently returns a sqlite
   file path from `CHECKPOINT_DB_PATH`) with an equivalent that builds a Postgres connection string
   from a new env var, `CHECKPOINT_POSTGRES_URI`, defaulting to
-  `postgresql://convmem:convmem@localhost:5432/convmem` for local dev. Stays the single shared helper
+  `postgresql://carqna:carqna@localhost:5432/carqna` for local dev. Stays the single shared helper
   both entrypoints call.
 
 - **`src/agent/copilotkit_server.py`**: in `lifespan`, swap `AsyncSqliteSaver` for
@@ -59,7 +65,7 @@ consistent backend everywhere.
   helper it already imports from `graph.py`.
 
 - **`.env.example`**: replace `CHECKPOINT_DB_PATH=./.db.sqlite3` with
-  `CHECKPOINT_POSTGRES_URI=postgresql://convmem:convmem@localhost:5432/convmem`.
+  `CHECKPOINT_POSTGRES_URI=postgresql://carqna:carqna@localhost:5432/carqna`.
 
 - **`CLAUDE.md`**: update "Required env vars" (swap `CHECKPOINT_DB_PATH` for
   `CHECKPOINT_POSTGRES_URI`), fix the spots describing the checkpointer as SQLite-based.
@@ -73,8 +79,8 @@ consistent backend everywhere.
 
 ## Verification
 
-1. `docker compose -p '' -f infrastructure/docker/docker-compose.yml up -d` — confirm `convmem`
-   user/database exist (container logs, or `psql postgresql://convmem:convmem@localhost:5432/convmem
+1. `docker compose -p '' -f infrastructure/docker/docker-compose.yml up -d` — confirm `carqna`
+   user/database exist (container logs, or `psql postgresql://carqna:carqna@localhost:5432/carqna
    -c '\dt'` after the app runs once and calls `setup()`).
 2. Start the backend (`python -m agent.copilotkit_server`) — confirm no errors from
    `checkpointer.setup()`.

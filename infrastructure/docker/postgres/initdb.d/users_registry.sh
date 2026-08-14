@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
-psql -v ON_ERROR_STOP=1 --username "convmem" --dbname "convmem" <<-EOSQL
+psql -v ON_ERROR_STOP=1 --username "carqna" --dbname "carqna" <<-EOSQL
 	CREATE TABLE IF NOT EXISTS user_registry (
-	    user_id TEXT PRIMARY KEY,
+	    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	    user_id TEXT NOT NULL UNIQUE,
 	    email TEXT,
 	    name TEXT,
 	    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
