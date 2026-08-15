@@ -70,7 +70,7 @@ Three different entry points expose the same `create_graph()` agent for differen
 
 Required env vars (see `.env.example`): `ANTHROPIC_API_KEY`, `MCP_CONFIG_PATH`,
 `INSURANCE_DOCS_ROOT`, `LLM_MODEL` (defaults to `claude-sonnet-4-5-20250929`), `PROMPTS_DIR`
-(defaults to `.`), `CHECKPOINT_POSTGRES_URI` (defaults to the local `carqna` Postgres database).
+(defaults to `.`), `POSTGRES_URI` (defaults to the local `carqna` Postgres database).
 
 Optional: `LANGSMITH_TRACING_V2=true` + `LANGSMITH_TRACING_MODE=hybrid|otel` +
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces`/`OTEL_SERVICE_NAME` route

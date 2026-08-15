@@ -87,19 +87,19 @@ def _create_httpx_factory():
     return httpx_client_factory
 
 
-def _get_checkpointer_conn_string() -> str:
+def _get_conn_string() -> str:
     """Get the Postgres checkpointer connection string.
 
     For local development use only. LangGraph API handles persistence automatically.
 
     Returns:
         Connection string for AsyncPostgresSaver.from_conn_string()
-        Reads from CHECKPOINT_POSTGRES_URI environment variable.
+        Reads from POSTGRES_URI environment variable.
         Defaults to the local `carqna` database (see
         infrastructure/docker/postgres/initdb.d/init_user.sh) if not set.
     """
     default_uri = "postgresql://carqna:carqna@localhost:5432/carqna"
-    conn_string = os.getenv("CHECKPOINT_POSTGRES_URI", default_uri)
+    conn_string = os.getenv("POSTGRES_URI", default_uri)
     logger.info(f"Using checkpoint database at: {conn_string.split('@')[-1]}")
     return conn_string
 

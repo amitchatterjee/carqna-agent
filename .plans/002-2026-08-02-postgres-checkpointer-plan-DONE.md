@@ -49,7 +49,7 @@ consistent backend everywhere.
 
 - **`src/agent/graph.py`**: replace `_get_checkpointer_conn_string()` (currently returns a sqlite
   file path from `CHECKPOINT_DB_PATH`) with an equivalent that builds a Postgres connection string
-  from a new env var, `CHECKPOINT_POSTGRES_URI`, defaulting to
+  from a new env var, `POSTGRES_URI`, defaulting to
   `postgresql://carqna:carqna@localhost:5432/carqna` for local dev. Stays the single shared helper
   both entrypoints call.
 
@@ -65,10 +65,10 @@ consistent backend everywhere.
   helper it already imports from `graph.py`.
 
 - **`.env.example`**: replace `CHECKPOINT_DB_PATH=./.db.sqlite3` with
-  `CHECKPOINT_POSTGRES_URI=postgresql://carqna:carqna@localhost:5432/carqna`.
+  `POSTGRES_URI=postgresql://carqna:carqna@localhost:5432/carqna`.
 
 - **`CLAUDE.md`**: update "Required env vars" (swap `CHECKPOINT_DB_PATH` for
-  `CHECKPOINT_POSTGRES_URI`), fix the spots describing the checkpointer as SQLite-based.
+  `POSTGRES_URI`), fix the spots describing the checkpointer as SQLite-based.
 
 - **`readme-developmment.md`**: note `docker compose up` now also starts `postgres` (no manual
   bootstrap needed, unlike OpenSearch's role setup).

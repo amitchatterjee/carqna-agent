@@ -33,7 +33,7 @@ class CreateSessionRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Lazy import: keep module importable without MCP reachable
-    from agent.graph import create_graph, _get_checkpointer_conn_string
+    from agent.graph import create_graph, _get_conn_string
 
     # Constructing a Client (when LANGSMITH_TRACING_MODE=otel/hybrid) is what
     # makes langsmith register its OTel TracerProvider as the process-global
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     # called here -- see the module-level comment by `app = FastAPI(...)`.)
     langsmith.Client()
 
-    conn_string = _get_checkpointer_conn_string()
+    conn_string = _get_conn_string()
 
     # Separate small pool for the `user_registry` table (see agent/user_tracking.py) --
     # deliberately not sharing AsyncPostgresSaver's internal pool, to keep this

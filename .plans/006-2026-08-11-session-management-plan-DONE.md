@@ -253,7 +253,7 @@ CLI and web are allowed to be fully separate systems here (no unified cross-surf
   Postgres does — LangGraph creates its own `checkpoints`/`checkpoint_writes`/`checkpoint_blobs`/
   `checkpoint_migrations` tables automatically on first use.
 - **File location**: a fixed local path, e.g. `~/.carqna/carqna_cli.sqlite`, overridable via an env var
-  (mirroring `CHECKPOINT_POSTGRES_URI`'s pattern) — exact default path to confirm at implementation
+  (mirroring `POSTGRES_URI`'s pattern) — exact default path to confirm at implementation
   time. One file holds both LangGraph's own checkpoint tables and the new `sessions` table below; no
   reason to split them across two files.
 - **New local `sessions` table** — DDL created on the fly by the CLI itself at startup (`CREATE TABLE
