@@ -35,10 +35,11 @@ cd ~/git
 langgraph new carqna-agent  --template new-langgraph-project-python
 ```
 
-### Install runtime + dev dependencies from pyproject.toml / uv.lock
+### Install runtime + dev dependencies + extras from pyproject.toml / uv.lock
 ```bash
 cd ~/git/carqna-agent
 uv sync --active
+uv sync --all-extras --active
 ```
 `--active` installs into the already-activated `~/carqna.venv` instead of `uv`'s own project-local
 `.venv` (which is `uv sync`'s default, and would silently ignore the venv you just created/activated
@@ -67,9 +68,10 @@ docker compose -p '' -f ./infrastructure/docker/docker-compose.yml build
 cd ~/git/carqna-agent
 docker compose -p '' -f ./infrastructure/docker/docker-compose.yml up -d
 ```
-Brings up `opensearch` and `postgres` (checkpointer storage for multi-turn conversation state).
-Postgres needs no manual bootstrap — `infrastructure/docker/postgres/initdb.d/init_user.sh` creates
-the `carqna` user/database automatically on first start.
+Brings up `opensearch`, `postgres` (checkpointer storage for multi-turn conversation state), and
+`rustfs` (S3-compatible object store, see "One-time setup of RustFS" below). Postgres needs no manual
+bootstrap — `infrastructure/docker/postgres/initdb.d/init_user.sh` creates the `carqna` user/database
+automatically on first start.
 
 ### One-time setup of Opensearch
 
@@ -167,6 +169,94 @@ curl -sS \
 ```
 
 The AutoGeek MCP server uses an `Authorization` header in [infrastructure/conf/raven/mcp.json](infrastructure/conf/raven/mcp.json); that header is configured with Alice's credentials for the MCP endpoint.
+
+
+### One-time setup of RustFS
+
+RustFS is the S3-compatible object store brought up by `docker compose up` above (`rustfs` service,
+console on port `9001`, S3 API on port `9000` — see `infrastructure/docker/docker-compose.yml`).
+Intended as the storage backend for `.plans/008-2026-08-15-s3-compatible-backend-plan-INPROG.md`
+(not yet wired into the agent — this section only covers standing up and verifying the bucket itself).
+
+1. **Log in to the console**: open `http://localhost:9001` in a browser and log in with the root
+   credentials from `docker-compose.yml`'s `rustfs` service (`RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY`):
+
+   | Field    | Value    |
+   |----------|----------|
+   | User ID  | `rustfs` |
+   | Password | `rustfs` |
+
+2. **Create a bucket**: *Browser* (left-hand panel) → add a new bucket named `carqna`.
+
+3. **Create a scoped access key** (for application/`s3cmd` use — not the root credentials above):
+   *Access Keys* (left-hand panel) → add a new access key:
+
+   | Field      | Value       |
+   |------------|-------------|
+   | Access key | `carqna`    |
+   | Secret key | `carqna123` |
+
+4. **Restrict the access key to the bucket**: select the new access key and attach this policy. It
+   allows all `s3:*` actions but explicitly denies delete, so this key can never remove objects or the
+   bucket itself:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": [
+           "s3:*"
+         ],
+         "Resource": [
+           "arn:aws:s3:::carqna",
+           "arn:aws:s3:::carqna/*"
+         ]
+       },
+       {
+         "Effect": "Deny",
+         "Action": [
+           "s3:DeleteObject",
+           "s3:DeleteObjectVersion",
+           "s3:DeleteBucket"
+         ],
+         "Resource": [
+           "arn:aws:s3:::carqna",
+           "arn:aws:s3:::carqna/*"
+         ]
+       }
+     ]
+   }
+   ```
+
+5. **Upload a few test files** to `carqna` via the *Browser* panel, to have something to verify
+   against below.
+
+#### Verify access with `s3cmd`
+
+`s3cmd` is already installed via this repo's `dev` extras (`uv sync --all-extras --active`, see
+above) — no separate install step needed. Configure it against RustFS's **S3 API port (`9000`, not
+the console's `9001` above)**:
+
+```bash
+cat << EOF > ~/.s3cfg
+access_key = carqna
+secret_key = carqna123
+host_base = localhost:9000
+host_bucket = localhost:9000
+use_https = False
+signature_v2 = False
+bucket_location = us-east-1
+addressing_type = path
+EOF
+
+# Test access -- should list the files uploaded in step 5 above
+s3cmd ls -r s3://carqna
+```
+
+`addressing_type = path` matters here: RustFS, like other self-hosted S3-compatible stores, doesn't
+do virtual-hosted-style bucket DNS.
+
 
 
 ### One-time setup of environment variables
