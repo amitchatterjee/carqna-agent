@@ -56,26 +56,48 @@ The two existing backend implementations split cleanly along how they model file
   `FilesystemBackend`.
 
 **New file `src/agent/s3_backend.py`**: `S3Backend(BackendProtocol)` as above, constructed with
-`bucket`, `endpoint_url`, `access_key`, `secret_key`, `region`. Path-style addressing
-(`Config(s3={"addressing_style": "path"})`) is typically required for self-hosted S3-compatible
-stores like RustFS/MinIO (they don't do virtual-hosted-style bucket DNS) — confirm against RustFS's
-own docs at implementation time rather than assuming.
+`bucket`, `prefix`, `endpoint_url`, `access_key`, `secret_key`, `region`. `prefix` (may be `""`) is
+prepended to every key the backend builds/matches, so a single bucket can host multiple logical roots
+(e.g. `s3://carqna/insurance-docs` vs. some other prefix later) without needing a dedicated bucket per
+use case. Path-style addressing (`Config(s3={"addressing_style": "path"})`) is typically required for
+self-hosted S3-compatible stores like RustFS/MinIO (they don't do virtual-hosted-style bucket DNS) —
+confirmed against the live RustFS setup in `readme-developmment.md`'s "One-time setup of RustFS"
+(`addressing_type = path` in its `s3cmd` config works there).
 
-**`src/agent/graph.py`**: gate backend choice on a new env var so today's behavior is unchanged until
-RustFS actually exists and is populated:
+**`src/agent/graph.py`**: rather than a separate on/off switch env var, reuse `INSURANCE_DOCS_ROOT`
+itself as a URI and dispatch on its scheme — this way there's exactly one setting that says both
+*which* backend and *where*, and it can never disagree with itself the way a separate
+`INSURANCE_DOCS_BACKEND` + `INSURANCE_DOCS_ROOT` pair could (e.g. backend set to `s3` while the root
+still points at a stale local path). `urllib.parse.urlsplit` is stdlib, no new dependency:
 
 ```python
 def _create_insurance_backend() -> BackendProtocol:
-    if os.getenv("INSURANCE_DOCS_BACKEND", "filesystem") == "s3":
+    docs_root = os.getenv("INSURANCE_DOCS_ROOT", default_filesystem_root)
+    parsed = urllib.parse.urlsplit(docs_root)
+
+    if parsed.scheme == "s3":
+        # s3://<bucket>/<prefix...> -- bucket from netloc, everything after
+        # the first "/" is an optional key prefix within that bucket.
         return S3Backend(
-            bucket=os.environ["S3_BUCKET"],
+            bucket=parsed.netloc,
+            prefix=parsed.path.lstrip("/"),
             endpoint_url=os.environ["S3_ENDPOINT_URL"],
             access_key=os.environ["S3_ACCESS_KEY_ID"],
             secret_key=os.environ["S3_SECRET_ACCESS_KEY"],
             region=os.getenv("S3_REGION", "us-east-1"),
         )
-    # existing FilesystemBackend(root_dir=..., virtual_mode=True) path, unchanged
-    ...
+
+    # "file:///abs/path" or a bare path (no scheme, e.g. "~/foo" or
+    # "./insurance_docs") -- bare-path form kept working as-is so today's
+    # .env files don't need to change. "~" only expands in the bare-path
+    # form: file:// URIs are taken as literal paths per normal URI
+    # semantics, so use an absolute file:// path, not file://~/....
+    filesystem_root = os.path.expanduser(
+        parsed.path if parsed.scheme == "file" else docs_root
+    )
+    if not os.path.exists(filesystem_root):
+        raise RuntimeError(f"Filesystem root not found: {filesystem_root}")
+    return FilesystemBackend(root_dir=filesystem_root, virtual_mode=True)
 ```
 
 `insurance_agent`'s `FilesystemPermission` block is backend-agnostic (a path-based permission layer
@@ -84,14 +106,20 @@ needed there regardless of which backend is active.
 
 **`pyproject.toml`**: add `boto3` as a dependency.
 
-**`.env.example`**: add (names are S3-protocol-generic, not RustFS-specific, since `boto3` talks to
-any S3-compatible endpoint the same way):
+**`.env.example`**: `INSURANCE_DOCS_ROOT` itself now selects the backend via scheme; the `S3_*` vars
+supply the connection details a URI can't carry (endpoint/credentials — RustFS isn't AWS, so there's
+no implicit default endpoint the way real S3 has). Names are S3-protocol-generic, not RustFS-specific,
+since `boto3` talks to any S3-compatible endpoint the same way:
 ```
-# Insurance docs backend -- "filesystem" (default, INSURANCE_DOCS_ROOT) or "s3" (S3-compatible
-# object store, e.g. RustFS via docker-compose). See .plans/008-...-s3-compatible-backend-plan.
-INSURANCE_DOCS_BACKEND=filesystem
+# Insurance docs root -- bare path or file:// URI for local filesystem (default,
+# unchanged from today), or s3://<bucket>/<prefix> for an S3-compatible object
+# store (e.g. RustFS via docker-compose). See
+# .plans/008-2026-08-15-s3-compatible-backend-plan.
+INSURANCE_DOCS_ROOT=~/git/knowledgexpert/data/linux-exec/insurance-docs
+# INSURANCE_DOCS_ROOT=s3://carqna/insurance-docs
+
+# Only read when INSURANCE_DOCS_ROOT uses the s3:// scheme above.
 S3_ENDPOINT_URL=http://localhost:9000
-S3_BUCKET=carqna
 S3_ACCESS_KEY_ID=
 S3_SECRET_ACCESS_KEY=
 S3_REGION=us-east-1
@@ -114,12 +142,13 @@ S3_REGION=us-east-1
 
 1. Static: confirm `S3Backend` type-checks against the installed `BackendProtocol` (`mypy --strict`),
    and that its return types match exactly (`WriteResult`/`ReadResult`/etc., not raw values).
-2. With `INSURANCE_DOCS_BACKEND` unset (default `filesystem`): confirm the agent behaves exactly as
-   today — no regression from adding the new code path.
-3. Once RustFS is up and a bucket exists with at least one uploaded handbook: set
-   `INSURANCE_DOCS_BACKEND=s3` + the `S3_*` vars, start the backend, and ask an insurance question
-   through the real UI — confirm `insurance_expert` can `ls`/`read`/`grep` the bucket and answers
-   correctly.
+2. With `INSURANCE_DOCS_ROOT` left as today's bare local path (no scheme): confirm the agent behaves
+   exactly as today — no regression from adding the new scheme-dispatch code path.
+3. Once RustFS is up and the `carqna` bucket has at least one uploaded handbook (already true per
+   `readme-developmment.md`'s "One-time setup of RustFS"): set `INSURANCE_DOCS_ROOT=s3://carqna` (or
+   `s3://carqna/<prefix>` if docs are placed under a prefix) + the `S3_*` vars, start the backend, and
+   ask an insurance question through the real UI — confirm `insurance_expert` can `ls`/`read`/`grep`
+   the bucket and answers correctly.
 4. Confirm `write` on an existing key returns an error (not a silent overwrite) — matches
    `FilesystemBackend`'s contract.
 5. Confirm `insurance_expert`'s write/delete `FilesystemPermission` denial still applies against the
