@@ -10,13 +10,17 @@ import asyncio
 import json
 import logging
 import os
+import urllib.parse
 from typing import Any
 
-from deepagents import FilesystemPermission, create_deep_agent, SubAgent
-from deepagents.backends import FilesystemBackend
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from dotenv import load_dotenv
 import httpx
+from deepagents import FilesystemPermission, SubAgent, create_deep_agent
+from deepagents.backends import FilesystemBackend
+from deepagents.backends.protocol import BackendProtocol
+from dotenv import load_dotenv
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+from agent.s3_backend import S3Backend
 
 # Load environment variables from .env file
 load_dotenv()
@@ -104,6 +108,64 @@ def _get_conn_string() -> str:
     return conn_string
 
 
+def _create_insurance_backend() -> BackendProtocol:
+    """Create the backend for the insurance_expert subagent's read-only doc corpus.
+
+    Dispatches on INSURANCE_DOCS_ROOT's URI scheme: `s3://<bucket>/<prefix>`
+    selects an S3-compatible object store (e.g. RustFS); `file://` or a bare
+    path (no scheme) selects the local filesystem, unchanged from before this
+    was configurable. Reusing INSURANCE_DOCS_ROOT itself as the switch (rather
+    than a separate on/off env var) means backend choice and location can
+    never disagree with each other. See
+    .plans/008-2026-08-15-s3-compatible-backend-plan-DONE.md.
+
+    Returns:
+        A BackendProtocol implementation ready to pass to create_deep_agent.
+
+    Raises:
+        FileNotFoundError: If the filesystem root doesn't exist.
+    """
+    default_filesystem_root = "~/git/knowledgexpert/data/linux-exec/insurance-docs"
+    docs_root = os.getenv("INSURANCE_DOCS_ROOT", default_filesystem_root)
+    parsed = urllib.parse.urlsplit(docs_root)
+
+    if parsed.scheme == "s3":
+        # s3://<bucket>/<prefix...> -- bucket from netloc, everything after
+        # the first "/" is an optional key prefix within that bucket.
+        bucket = parsed.netloc
+        prefix = parsed.path.lstrip("/")
+        logger.info(
+            f"Initialized S3 backend for insurance docs: bucket={bucket} prefix={prefix!r}")
+        return S3Backend(
+            bucket=bucket,
+            prefix=prefix,
+            endpoint_url=os.environ["S3_ENDPOINT_URL"],
+            access_key=os.environ["S3_ACCESS_KEY_ID"],
+            secret_key=os.environ["S3_SECRET_ACCESS_KEY"],
+            region=os.getenv("S3_REGION", "us-east-1"),
+        )
+
+    # "file:///abs/path" or a bare path (no scheme, e.g. "~/foo" or
+    # "./insurance_docs") -- bare-path form kept working as-is so existing
+    # .env files don't need to change. "~" only expands in the bare-path
+    # form: a file:// URI's path is taken literally per normal URI
+    # semantics, so use an absolute file:// path, not file://~/....
+    filesystem_root = os.path.expanduser(
+        parsed.path if parsed.scheme == "file" else docs_root
+    )
+    if not os.path.exists(filesystem_root):
+        raise FileNotFoundError(
+            f"Filesystem root not found: {filesystem_root}")
+
+    logger.info(
+        f"Initialized read-only filesystem backend with root: {filesystem_root}")
+    return FilesystemBackend(
+        root_dir=filesystem_root,
+        # Prevents path traversal (blocks .., ~, absolute paths)
+        virtual_mode=True,
+    )
+
+
 async def _initialize_mcp_tools():
     """Initialize MCP client and load tools once."""
     global _mcp_client, _mcp_tools
@@ -159,22 +221,9 @@ async def create_graph(checkpointer=None) -> Any:
         logger.error(f"Failed to initialize MCP tools: {e}")
         raise
 
-    # Initialize read-only filesystem backend for insurance data
-    default_filesystem_root = "~/git/knowledgexpert/data/linux-exec/insurance-docs"
-    filesystem_root = os.path.expanduser(
-        os.getenv("INSURANCE_DOCS_ROOT", default_filesystem_root)
-    )
-    if not os.path.exists(filesystem_root):
-        raise FileNotFoundError(
-            f"Filesystem root not found: {filesystem_root}")
-
-    filesystem_backend = FilesystemBackend(
-        root_dir=filesystem_root,
-        # Prevents path traversal (blocks .., ~, absolute paths)
-        virtual_mode=True,
-    )
-    logger.info(
-        f"Initialized read-only filesystem backend with root: {filesystem_root}")
+    # Initialize the (read-only, enforced via FilesystemPermission below)
+    # backend for insurance data -- filesystem or S3, per INSURANCE_DOCS_ROOT.
+    insurance_backend = _create_insurance_backend()
 
     # Define specialized subagents
     car_price_agent = SubAgent(
@@ -207,7 +256,7 @@ async def create_graph(checkpointer=None) -> Any:
     main_agent = create_deep_agent(
         model=llm_model,
         tools=tools,
-        backend=filesystem_backend,
+        backend=insurance_backend,
         system_prompt=_load_prompt_from_file("main_agent.md"),
         subagents=[car_price_agent, insurance_agent],
         name="Automobile Help Assistant",

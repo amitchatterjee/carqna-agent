@@ -174,9 +174,10 @@ The AutoGeek MCP server uses an `Authorization` header in [infrastructure/conf/r
 ### One-time setup of RustFS
 
 RustFS is the S3-compatible object store brought up by `docker compose up` above (`rustfs` service,
-console on port `9001`, S3 API on port `9000` — see `infrastructure/docker/docker-compose.yml`).
-Intended as the storage backend for `.plans/008-2026-08-15-s3-compatible-backend-plan-INPROG.md`
-(not yet wired into the agent — this section only covers standing up and verifying the bucket itself).
+console on port `9001`, S3 API on port `9000` — see `infrastructure/docker/docker-compose.yml`). It's
+an optional backend for the `insurance_expert` subagent's doc corpus, as an alternative to the local
+filesystem -- see "Switching the insurance docs backend to S3" below and
+`.plans/008-2026-08-15-s3-compatible-backend-plan-DONE.md` for the full design.
 
 1. **Log in to the console**: open `http://localhost:9001` in a browser and log in with the root
    credentials from `docker-compose.yml`'s `rustfs` service (`RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY`):
@@ -230,7 +231,9 @@ Intended as the storage backend for `.plans/008-2026-08-15-s3-compatible-backend
    ```
 
 5. **Upload a few test files** to `carqna` via the *Browser* panel, to have something to verify
-   against below.
+   against below. (For uploading a real local folder of documents -- e.g. the insurance-docs corpus --
+   prefer `tools/sync-docs.sh` instead of the console; see "Upload documents with `tools/sync-docs.sh`"
+   below.)
 
 #### Verify access with `s3cmd`
 
@@ -257,7 +260,49 @@ s3cmd ls -r s3://carqna
 `addressing_type = path` matters here: RustFS, like other self-hosted S3-compatible stores, doesn't
 do virtual-hosted-style bucket DNS.
 
+#### Upload documents with `tools/sync-docs.sh`
 
+`tools/sync-docs.sh` wraps `s3cmd sync` to upload a local folder into an S3-compatible bucket, as a
+faster/repeatable alternative to uploading through the RustFS web console (step 5 above). Requires
+`s3cmd` already configured (the "Verify access with `s3cmd`" step above).
+
+```bash
+cd ~/git/carqna-agent
+
+# Dry run first -- shows what would be uploaded without uploading
+./tools/sync-docs.sh -n ./data/virtual-fs/insurance-docs s3://carqna/insurance-docs
+
+# Then for real
+./tools/sync-docs.sh ./data/virtual-fs/insurance-docs s3://carqna/insurance-docs
+```
+
+`S3_DEST` (the second argument) should match whatever `INSURANCE_DOCS_ROOT` will be set to below --
+`./tools/sync-docs.sh -h` for full usage. Not insurance-docs-specific -- works for any local folder of
+documents/data you want mirrored into the bucket.
+
+### Switching the insurance docs backend to S3
+
+`insurance_expert`'s doc corpus defaults to the local filesystem (`INSURANCE_DOCS_ROOT`, a bare path
+or `file://` URI). To use RustFS (or any other S3-compatible store) instead, set `INSURANCE_DOCS_ROOT`
+to an `s3://<bucket>/<prefix>` URI plus the connection details a URI can't carry, in `.env`:
+
+```bash
+INSURANCE_DOCS_ROOT=s3://carqna/insurance-docs
+
+S3_ENDPOINT_URL=http://localhost:9000
+S3_ACCESS_KEY_ID=carqna
+S3_SECRET_ACCESS_KEY=carqna123
+S3_REGION=us-east-1
+```
+
+The `S3_*` vars are only read when `INSURANCE_DOCS_ROOT` uses the `s3://` scheme; they're ignored on
+the filesystem path. Restart the backend/CLI to pick up the change -- it's read once at graph
+construction, not a runtime toggle. To confirm which backend is actually active, check the startup log
+line (`grep -i "Initialized.*backend"` on stdout): it logs either
+`Initialized S3 backend for insurance docs: bucket=... prefix=...` or
+`Initialized read-only filesystem backend with root: ...`. See
+`.plans/008-2026-08-15-s3-compatible-backend-plan-DONE.md` for the full design and verification
+history.
 
 ### One-time setup of environment variables
 ```bash
